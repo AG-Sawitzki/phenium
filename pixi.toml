@@ -1,0 +1,147 @@
+[workspace]
+authors = ["minna"]
+channels = ["conda-forge", "bioconda", "nvidia", "pytorch"]
+name = "phenium"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+
+[dependencies]
+python = ">=3.8"
+cuda = "12.6.*"
+tomlkit = "*"
+geopandas = "*"
+geojson = "*"
+shapely = "*"
+psutil = "*"
+polars = "*"
+pandas = "*"
+
+[pypi-options]
+index-url = "https://download.pytorch.org/whl/cu126"
+
+[pypi-dependencies]
+bokeh = "*"
+cellpose = "==4.2.1.1"
+dask = "*"
+dask-image = "*"
+dask-jobqueue = "*"
+DINOv3 = { git = "https://github.com/facebookresearch/dinov3", rev = "6876159a11b4df116f30f667f8c9888617df0751" }
+distributed = "*"
+fastremap = "*"
+fill-voids = "*"
+google-cloud-storage = "*"
+natsort  = "*"
+numpy = "*"
+opencv-python-headless = "*"
+pyqt5 = "*"
+pyqtgraph = ">=0.11.0rc0"
+pyyaml = "*"
+qtpy = "*"
+roifile = "*"
+scipy = "*"
+tifffile = "*"
+torch = ">=1.6"
+torchvision = "*"
+tqdm = "*"
+zarr = "*"
+
+# [feature.main]
+# platforms = ["linux-64"]
+
+# [feature.main.target.linux-64.dependencies]
+# python = "*"
+# tomlkit = "*"
+# numpy = "*"
+# pandas = "*"
+# psutil = "*"
+# tqdm = "*"
+# matplotlib = "*"
+# uv = "*"
+# jupyterlab = "*"
+
+# [feature.geom]
+# platforms = ["linux-64"]
+
+# [feature.geom.target.linux-64.dependencies]
+# geojson = "*"
+# geopandas = "*"
+# shapely = "*"
+
+
+# [feature.tables]
+# platforms = ["linux-64"]
+
+# [feature.tables.target.linux-64.dependencies]
+# polars = "*"
+# pyarrow = "*"
+# fiona = "*"
+# zarr = "*"
+
+
+# [feature.img]
+# platforms = ["linux-64"]
+
+# [feature.img.target.linux-64.dependencies]
+# tifffile = "*"
+# # opencv-python-headless = "*"
+
+
+
+# [feature.cellpose]
+# platforms = ["linux-64"]
+# channels = ["nvidia", "pytorch", "conda-forge", "nodefaults"]
+
+# [feature.cellpose.target.linux-64.dependencies]
+# cuda = "12.6.*"
+# python = ">=3.8"
+# tomlkit = "*"
+
+# [feature.cellpose.pypi-options]
+# index-url = "https://download.pytorch.org/whl/cu126"
+
+# [feature.cellpose.target.linux-64.pypi-dependencies]
+# qtpy = "*"
+# numpy = "*"
+# scipy = "*"
+# torch = ">=1.6"
+# torchvision = "*"
+# opencv-python-headless = "*"
+# pyqtgraph = ">=0.11.0rc0"
+# natsort  = "*"
+# google-cloud-storage = "*"
+# tqdm = "*"
+# tifffile = "*"
+# fastremap = "*"
+# cellpose = "==4.2.1.1"
+# # { git = "https://github.com/MouseLand/cellpose", rev = "a54cb48849b7e225a81e8e43dcb042d42427f543" }
+# roifile = "*"
+# pyqt5 = "*"
+# dask = "*"
+# distributed = "*"
+# dask-image = "*"
+# pyyaml = "*"
+# zarr = "*"
+# dask-jobqueue = "*"
+# bokeh = "*"
+# fill-voids = "*"
+# DINOv3 = { git = "https://github.com/facebookresearch/dinov3", rev = "6876159a11b4df116f30f667f8c9888617df0751" }
+
+
+# [feature.ovrlpy]
+# platforms = ["linux-64"]
+
+# [feature.ovrlpy.target.linux-64.dependencies]
+# ovrlpy = "==1.2.0"
+
+
+
+# [feature.proseg]
+# platforms = ["linux-64"]
+
+# [feature.proseg.target.linux-64.dependencies]
+# rust = ">=1.77.2"
+
+
+# [environments]
+# default = ["main", "geom", "img", "tables", "cellpose", "ovrlpy", "proseg"]
