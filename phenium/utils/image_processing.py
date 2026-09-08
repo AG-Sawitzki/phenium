@@ -136,6 +136,9 @@ def find_rois(
     dtype = [('area', float), ('ai', float), ('y', float), ('x', float)]
 
     centres = make_area_centres(n_roi, subres_centre.shape)
+    # maybe do NMS (cv2.dnn.NMSBoxes) with score_threshold = 0?
+    # or scores = size?
+    # and NMS_threshold = 1
     print(centres)
     for c in contours:
         (x, y), (w, h), a = cv2.minAreaRect(c)

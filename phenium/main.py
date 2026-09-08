@@ -18,9 +18,10 @@ class NotImplemented(Exception):
 class Phenium(object):
     def __init__(
             self,
-            input_dir, output_dir,
+            input_dir,
+            output_dir,
             config_path,
-        ):
+        )-> None:
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir)
         self.config_path = Path(config_path)
@@ -31,7 +32,9 @@ class Phenium(object):
 
     def _load_as_zarr(self, focus=False):
         if focus:
-            raise NotImplemented('Not Implemented to load morphology_focus as zarr.')
+            raise NotImplementedError(
+                'Nor Implemented to load morphology_focus as zarr.'
+            )
         else:
             img_path = self.input_dir / 'morphology.ome.tif'
         img_store = tifffile.imread(
@@ -43,6 +46,10 @@ class Phenium(object):
     def find_sections(self, focus=False):
         self._load_as_zarr(focus=focus)
         subresolution_level = [lvl for lvl in self.img_zarr]
+        # isn't the above basically img_zarr.len()??
+        # if yes then set self.img_lvl = max and the loop through range
+        self.img_shape = self.img_zarr[min(subresolution_level)].shape
+        contours, _ = find_rois(self.img_shape, self.img_zarr[max(subresolution_level)], 0)
 
 
     def _transcripts_for_ovrlpy(self):
@@ -56,5 +63,4 @@ class Phenium(object):
                 n_threads=mp.cpu_count(),
             )
         else:
-            raise NotImplemented(f"Not Implemented to deal with `{machine}`.")
-    
+            raise NotImplementedError(f"Not Implemented to deal with `{machine}`.")
