@@ -1,147 +1,36 @@
 [workspace]
 authors = ["minna"]
-channels = ["conda-forge", "bioconda", "nvidia", "pytorch"]
+channels = ["conda-forge", "bioconda", "pytorch", "nodefaults"]
 name = "phenium"
-platforms = ["linux-64"]
+platforms = [
+    { name = "lida", platform = "linux-64", cuda = "12.0" },
+]
 version = "0.1.0"
 
+[target.lida.dependencies]
+python = "*"
+pytorch-gpu = "*"
+cuda-version = "12.6.*"
+py-opencv = ">=4.12.0,<5"
+pyqtgraph = ">=0.14.0,<0.15"
+pyqt6 = ">=6.8.1,<7"
+imagecodecs = ">=2026.1.14,<2027"
+roifile = ">=2026.7.30,<2027"
+fastremap = ">=1.20.0,<2"
+fill-voids = ">=2.1.2,<3"
+cellpose = ">=4.1.1,<5"
+rust = ">=1.98.1,<1.99"
+geojson = ">=3.3.0,<4"
+shapely = ">=2.1.2,<3"
+geopandas = ">=1.1.4,<2"
+tomlkit = ">=0.15.1,<0.16"
+psutil = ">=7.2.2,<8"
+tqdm = ">=4.70.0,<5"
+scanpy = ">=1.12.4,<2"
 
-[dependencies]
-python = ">=3.8"
-cuda = "12.6.*"
-tomlkit = "*"
-geopandas = "*"
-geojson = "*"
-shapely = "*"
-psutil = "*"
-polars = "*"
-pandas = "*"
+[constraints]
+pandas = ">2.0,<3.0"
 
-[pypi-options]
-index-url = "https://download.pytorch.org/whl/cu126"
-
-[pypi-dependencies]
-bokeh = "*"
-cellpose = "==4.2.1.1"
-dask = "*"
-dask-image = "*"
-dask-jobqueue = "*"
+[target.lida.pypi-dependencies]
+ovrlpy = ">=1.2.0, <2"
 DINOv3 = { git = "https://github.com/facebookresearch/dinov3", rev = "6876159a11b4df116f30f667f8c9888617df0751" }
-distributed = "*"
-fastremap = "*"
-fill-voids = "*"
-google-cloud-storage = "*"
-natsort  = "*"
-numpy = "*"
-opencv-python-headless = "*"
-pyqt5 = "*"
-pyqtgraph = ">=0.11.0rc0"
-pyyaml = "*"
-qtpy = "*"
-roifile = "*"
-scipy = "*"
-tifffile = "*"
-torch = ">=1.6"
-torchvision = "*"
-tqdm = "*"
-zarr = "*"
-
-# [feature.main]
-# platforms = ["linux-64"]
-
-# [feature.main.target.linux-64.dependencies]
-# python = "*"
-# tomlkit = "*"
-# numpy = "*"
-# pandas = "*"
-# psutil = "*"
-# tqdm = "*"
-# matplotlib = "*"
-# uv = "*"
-# jupyterlab = "*"
-
-# [feature.geom]
-# platforms = ["linux-64"]
-
-# [feature.geom.target.linux-64.dependencies]
-# geojson = "*"
-# geopandas = "*"
-# shapely = "*"
-
-
-# [feature.tables]
-# platforms = ["linux-64"]
-
-# [feature.tables.target.linux-64.dependencies]
-# polars = "*"
-# pyarrow = "*"
-# fiona = "*"
-# zarr = "*"
-
-
-# [feature.img]
-# platforms = ["linux-64"]
-
-# [feature.img.target.linux-64.dependencies]
-# tifffile = "*"
-# # opencv-python-headless = "*"
-
-
-
-# [feature.cellpose]
-# platforms = ["linux-64"]
-# channels = ["nvidia", "pytorch", "conda-forge", "nodefaults"]
-
-# [feature.cellpose.target.linux-64.dependencies]
-# cuda = "12.6.*"
-# python = ">=3.8"
-# tomlkit = "*"
-
-# [feature.cellpose.pypi-options]
-# index-url = "https://download.pytorch.org/whl/cu126"
-
-# [feature.cellpose.target.linux-64.pypi-dependencies]
-# qtpy = "*"
-# numpy = "*"
-# scipy = "*"
-# torch = ">=1.6"
-# torchvision = "*"
-# opencv-python-headless = "*"
-# pyqtgraph = ">=0.11.0rc0"
-# natsort  = "*"
-# google-cloud-storage = "*"
-# tqdm = "*"
-# tifffile = "*"
-# fastremap = "*"
-# cellpose = "==4.2.1.1"
-# # { git = "https://github.com/MouseLand/cellpose", rev = "a54cb48849b7e225a81e8e43dcb042d42427f543" }
-# roifile = "*"
-# pyqt5 = "*"
-# dask = "*"
-# distributed = "*"
-# dask-image = "*"
-# pyyaml = "*"
-# zarr = "*"
-# dask-jobqueue = "*"
-# bokeh = "*"
-# fill-voids = "*"
-# DINOv3 = { git = "https://github.com/facebookresearch/dinov3", rev = "6876159a11b4df116f30f667f8c9888617df0751" }
-
-
-# [feature.ovrlpy]
-# platforms = ["linux-64"]
-
-# [feature.ovrlpy.target.linux-64.dependencies]
-# ovrlpy = "==1.2.0"
-
-
-
-# [feature.proseg]
-# platforms = ["linux-64"]
-
-# [feature.proseg.target.linux-64.dependencies]
-# rust = ">=1.77.2"
-
-
-# [environments]
-# default = ["main", "geom", "img", "tables", "cellpose", "ovrlpy", "proseg"]
