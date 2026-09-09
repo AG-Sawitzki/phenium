@@ -1,4 +1,8 @@
-from phenium.utils.image_processing import find_rois
+from phenium.utils import (
+    find_rois,
+    bboxes_to_sections,
+    filter_by_location
+)
 
 import multiprocessing as mp
 from pathlib import Path
@@ -25,6 +29,8 @@ class Phenium(object):
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir)
         self.config_path = Path(config_path)
+        # load boundaries here? or in func?
+        # same for img...
 
     def _parse_config(self):
         with open(self.config_path) as f:
@@ -33,7 +39,7 @@ class Phenium(object):
     def _load_as_zarr(self, focus=False):
         if focus:
             raise NotImplementedError(
-                'Nor Implemented to load morphology_focus as zarr.'
+                'Not Implemented to load morphology_focus as zarr.'
             )
         else:
             img_path = self.input_dir / 'morphology.ome.tif'
@@ -45,22 +51,45 @@ class Phenium(object):
 
     def find_sections(self, focus=False):
         self._load_as_zarr(focus=focus)
-        subresolution_level = [lvl for lvl in self.img_zarr]
-        # isn't the above basically img_zarr.len()??
-        # if yes then set self.img_lvl = max and the loop through range
-        self.img_shape = self.img_zarr[min(subresolution_level)].shape
-        contours, _ = find_rois(self.img_shape, self.img_zarr[max(subresolution_level)], 0)
-
+        subresolution_lvl = len(self.img_zarr)
+        self.img_shape = self.img_zarr['0'].shape
+        bboxes = find_rois(
+            self.img_shape,
+            self.img_zarr[str(subresolution_lvl-1)]
+        )
+        self.sections = bboxes_to_sections(
+            bboxes,
+            self.img_shape,
+            self.img_zarr[str(subresolution_lvl-1)].shape
+        )
+        return self.sections
 
     def _transcripts_for_ovrlpy(self):
         machine = self.config['type']
         if machine == 'xenium':
-            self.coordinates = ovrlpy.io.read_Xenium(
+            self.transcripts = ovrlpy.io.read_Xenium(
                 filepath=self.input_dir / 'transcripts.parquet',
                 min_qv=None,
                 remove_features=ovrlpy.io.XENIUM_CTRLS,
-                additional_columns=None,
+                additional_columns=['transcript_id'],
                 n_threads=mp.cpu_count(),
             )
         else:
-            raise NotImplementedError(f"Not Implemented to deal with `{machine}`.")
+            raise NotImplementedError(
+                f"Not Implemented to deal with `{machine}`."
+            )
+
+    # def load_boundaries?
+
+    def filter_for_section(self, table, section):
+        # must be adapted for boundaries!
+        # currently only transcripts are passed...
+        coords = self.sections[str(section)]
+        filtered_table = filter_by_location(
+            self.transcripts,
+            coords
+        )
+
+        return filtered_table
+
+    # def compute_VSI?

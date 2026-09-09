@@ -423,7 +423,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/urllib3-2.7.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/wayland-protocols-1.49-hd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/xyzservices-2026.9.1-pyhd8ed1ab_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/zarr-3.3.0-pyhc364b38_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/zarr-3.1.5-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-4.1.0-pyhcf101f3_0.conda
       - pypi: git+https://github.com/facebookresearch/dinov3?rev=6876159a11b4df116f30f667f8c9888617df0751#6876159a11b4df116f30f667f8c9888617df0751
       - pypi: https://files.pythonhosted.org/packages/25/f4/ead6e0e37209b07c9baa3e984ccdb0348ca370b77cea3aaea8ddbb097e00/lightning_utilities-0.15.3-py3-none-any.whl
@@ -7154,15 +7154,15 @@ packages:
   run_exports: {}
   size: 53963
   timestamp: 1788530754725
-- conda: https://conda.anaconda.org/conda-forge/noarch/zarr-3.3.0-pyhc364b38_0.conda
-  sha256: 9563025fbe0aab05a099651d087747dda6eea21605e13fbc920c555dc14936b2
-  md5: 9ea26dd8ab46e83b7b7faaa891037471
+- conda: https://conda.anaconda.org/conda-forge/noarch/zarr-3.1.5-pyhcf101f3_0.conda
+  sha256: c36bec7d02d2f227409fcc4cf586cf3a658af068b58374de7f8f2d0b5c1c84f9
+  md5: c1844a94b2be61bb03bbb71574a0abfc
   depends:
-  - python >=3.12
+  - python >=3.11
   - packaging >=22.0
-  - numpy >=2
+  - numpy >=1.26
   - numcodecs >=0.14
-  - typing_extensions >=4.14
+  - typing_extensions >=4.9
   - donfig >=0.8
   - google-crc32c >=1.5
   - python
@@ -7174,8 +7174,8 @@ packages:
   purls:
   - pkg:pypi/zarr?source=hash-mapping
   run_exports: {}
-  size: 471664
-  timestamp: 1785511642744
+  size: 305998
+  timestamp: 1763742695201
 - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-4.1.0-pyhcf101f3_0.conda
   sha256: 210bd31c22bb88f5e2a167df24c95bb5f152b2ada7502f9b8c49d1f5366db423
   md5: ba3dcdc8584155c97c648ae9c044b7a3
