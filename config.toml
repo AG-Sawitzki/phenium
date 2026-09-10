@@ -1,0 +1,145 @@
+# TOML for phenium
+[owner]
+name = 'Normann-BPh'
+mail = 'philomina-lillie.normann@bih-charite.de'
+
+
+[Basics]
+# stats of the morphology.ome.tif
+# micrometer per pixel
+pixelsize_xy = 0.2125
+pixelsize_z = 3.0000
+# ....
+type = 'xenium'
+
+[proseg]
+# run `proseg --help` in the terminal after installing
+# for a list of all accepted arguments and their description
+# or look at the github link provided below.
+
+[proseg.general]
+# --------------------------------------
+# general options
+# --------------------------------------
+# consult https://github.com/dcjones/proseg#general-arguments
+# 
+# set to 0 to use all cores available
+nthreads = 0
+# set to 0 to let phenium decide
+# or if expected set to an integer(!).
+voxel-layers = 0
+samples = 200
+burnin-samples = 200
+# set by the pipeline. best left empty.
+voxel-size = ''
+# set by the pipeline. best left empty.
+burnin-voxel-size = ''
+
+[proseg.output]
+# --------------------------------------
+# advanced options
+# --------------------------------------
+# consult /proseg#output-arguments
+counts = true
+expected-counts = false
+rates = false
+cell-metadata = false
+transcript-metadata = false
+gene-metadata = false
+metagene-rates = false
+metagene-loadings = false
+voxel-counts = false
+# -------------------
+cell-polygons = true
+union-cell-polygons = false
+cell-polygon-layers = true
+# --------------------------------------
+[proseg.model]
+# consult /proseg#model-arguments
+min-qv = 0
+cells-per-chunk = 100
+ncomponents = 10
+nhidden = 200
+hillclimb = 50
+recorded-samples = 100
+cell-compactness = 0.04
+morphology-steps-per-iter = 4000
+nuclear-reassignment-prob = 0.2
+prior-seg-reassignment-prob = 0.5
+prior-weight = 1
+coordinate-scale = 1
+quad-size = 150
+max-transcript-nucleus-distance = 60
+burnin-dispersion = 1
+ab-nihlo-bubble-prob = 0.05
+monitor-cell-polygons-freq = 10
+nunfactored = 200
+hyperparam-e-phi = 1
+hyperparam-f-phi = 1
+hyperparam-neg-mu-phi = 1
+hyperparam-tau-phi = 0.1
+density-bandwidth = 0.5
+density-bins = 5
+# -------------------
+ignore-z-coord = false
+variable-burnin-dispersion = false
+check-consistency = false
+exclude-spatialdata-transcripts = false
+monitor-cell-polygons = false
+enforce-connectivity = false
+no-factorization = false
+include-neg-ctrls = false
+use-scaled-cells = false
+# --------------------------------------
+[proseg.diffusion]
+no-diffusion = false
+diffusion-probability = 0.2
+diffusion-sigma-near = 1
+diffusion-sigma-far = 4
+diffusion-sigma-z = 0.1
+diffusion-proposal-sigma = 4
+diffusion-proposal-sigma-z = 0.2
+
+
+
+[cellpose]
+# style of segmentation.
+# Either: 'pheno' for PhenoCycler input
+# or 'focus' for morphology_focus input.
+style = 'focus'
+
+[cellpose.model]
+# consult cellpose/models.py#L104 for description of parameters
+gpu = true
+# available models: cpdino, cpsam_v2, cpdino-vitb, cpsam
+pretrained_model = 'cpsam_v2'
+# model_type = not used in v4.0.1+
+# diam_mean = unknown, not used in v4.0.1+
+device = 'cuda:0'
+use_bfloat16 = true
+
+[cellpose.eval]
+# consult cellpose/models.py#L163 for description of parameters
+batch_size = 64
+resample = true
+# channel_axis = morphology has only one channel; ZYX
+z_axis = 0
+# rescale = original size is prefered
+# diameter = diameter unknown; original size is prefered
+# flow_threshold = 0.4; not used for 3D
+cellprob_threshold = 0.0
+do_3D = true
+flow3D_smooth = 0
+# anisotropy = turned off by default
+stitch_threshold = 0.0
+min_size = 15
+max_size_fraction = 0.4
+# niter = defaults to None
+augment = false
+tile_overlap = 0.1
+# bsize = defaults to None
+# interp = not available for 3D
+compute_masks = true
+# progress = # requires pyqt bar, which opens in external window
+[methods.cpsam.eval.normalize]
+norm3D = true

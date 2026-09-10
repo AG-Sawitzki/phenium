@@ -427,11 +427,13 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-4.1.0-pyhcf101f3_0.conda
       - pypi: git+https://github.com/facebookresearch/dinov3?rev=6876159a11b4df116f30f667f8c9888617df0751#6876159a11b4df116f30f667f8c9888617df0751
       - pypi: https://files.pythonhosted.org/packages/25/f4/ead6e0e37209b07c9baa3e984ccdb0348ca370b77cea3aaea8ddbb097e00/lightning_utilities-0.15.3-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/28/b6/0f760b625233ae39ed7df1069e11edd8c2f8807acac75e40f6228507238c/cmap-0.7.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/30/2a/1b64fb895cdf11316b9a821744d9d869ad128fbe63393e6fc2eb4450e0f4/ovrlpy-1.2.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/33/d1/8bb87d21e9aeb323cc03034f5eaf2c8f69841e40e4853c2627edf8111ed3/termcolor-3.3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3a/f1/59154659081930fbde291ea6225607956b500a71b0ce45d88217b7d32da2/polars-1.44.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3e/38/7859ff46355f76f8d19459005ca000b6e7012f2f1ca597746cbcd1fbfe5e/antlr4-python3-runtime-4.9.3.tar.gz
       - pypi: https://files.pythonhosted.org/packages/3f/a6/e9a59b507cdf7a9735df4bab92b4ea9d2ca2e665c6de14c112db7e3c0926/regex-2026.9.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/57/5b/28365212062939d213802e5e5fe855cdb231e1c2a93254ba1690066504e3/xarray-2026.7.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/98/d6/33a411115b61dbfc16ad6ad73e71730f6fea654ee3667673bc53ab0e2fe7/pyarrow-25.0.1-cp313-cp313-manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/a4/0e/152509871bf30df6fc38569f52a2db9b55dd41aae957adae50a053ac7778/omegaconf-2.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a8/c0/2dfab7b319dabe23f5a7b515a797c74b501d15c72e7a03837cf0cf779b9e/matplotlib_scalebar-0.9.0-py3-none-any.whl
@@ -439,6 +441,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/c3/a2/c7f6ebf546f8f644edf0f999aa98ece106986a77a7b922316bf6414ff825/torchmetrics-1.9.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c4/0e/57f6bb3024a597b2e8ec4aee710ffe62ddc95af2e2bb1ee7a7abdc22c68c/wcwidth-0.8.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ea/bb/711e1c2ebd18a21202c972dd5d5c8e09a921f2d3560e3a53d6350c808ab7/submitit-1.5.4-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/f3/17/504a5f77bc1998d18761008a400ef096ed66269fb87852aa2f6eb6e9d43c/microfilm-0.3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/fc/0a/0858f60cb5a6f8f73ec4cdd73eccd9f748d66bfc23304c5c23fa3468094a/polars_runtime_32-1.44.1-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-8_kmp_llvm.conda
@@ -7220,6 +7223,13 @@ packages:
   - jsonargparse[signatures]>=4.38.0 ; extra == 'cli'
   - tomlkit ; extra == 'cli'
   requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/28/b6/0f760b625233ae39ed7df1069e11edd8c2f8807acac75e40f6228507238c/cmap-0.7.2-py3-none-any.whl
+  name: cmap
+  version: 0.7.2
+  sha256: ad85bcc2327351bb72ff41516d4116d74b0af89258b35a323fcccb655a64f1f2
+  requires_dist:
+  - numpy
+  requires_python: '>=3.9'
 - pypi: https://files.pythonhosted.org/packages/30/2a/1b64fb895cdf11316b9a821744d9d869ad128fbe63393e6fc2eb4450e0f4/ovrlpy-1.2.0-py3-none-any.whl
   name: ovrlpy
   version: 1.2.0
@@ -7301,6 +7311,54 @@ packages:
   version: 2026.9.3
   sha256: 27f0809798071f56fb1bc536bb93714a95e8ed2ec0dfd869f095deebb30fd11a
   requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/57/5b/28365212062939d213802e5e5fe855cdb231e1c2a93254ba1690066504e3/xarray-2026.7.0-py3-none-any.whl
+  name: xarray
+  version: 2026.7.0
+  sha256: bf9dd130b93806dc78e90c1b7ac24851b31557b888674c53622235691cf21824
+  requires_dist:
+  - numpy>=1.26
+  - packaging>=24.2
+  - pandas>=2.2
+  - scipy>=1.15 ; extra == 'accel'
+  - bottleneck ; extra == 'accel'
+  - numbagg>=0.9 ; extra == 'accel'
+  - numba>=0.62 ; extra == 'accel'
+  - flox>=0.10 ; extra == 'accel'
+  - opt-einsum ; extra == 'accel'
+  - xarray[accel,etc,io,parallel,viz] ; extra == 'complete'
+  - netcdf4>=1.6.0 ; extra == 'io'
+  - h5netcdf[h5py]>=1.5.0 ; extra == 'io'
+  - pydap ; extra == 'io'
+  - scipy>=1.15 ; extra == 'io'
+  - zarr>=3.0 ; extra == 'io'
+  - fsspec ; extra == 'io'
+  - cftime ; extra == 'io'
+  - pooch ; extra == 'io'
+  - sparse>=0.15 ; extra == 'etc'
+  - dask[complete] ; extra == 'parallel'
+  - cartopy>=0.24 ; extra == 'viz'
+  - matplotlib>=3.10 ; extra == 'viz'
+  - nc-time-axis ; extra == 'viz'
+  - seaborn ; extra == 'viz'
+  - pandas-stubs ; extra == 'types'
+  - scipy-stubs ; extra == 'types'
+  - types-colorama ; extra == 'types'
+  - types-decorator ; extra == 'types'
+  - types-defusedxml ; extra == 'types'
+  - types-docutils ; extra == 'types'
+  - types-networkx ; extra == 'types'
+  - types-openpyxl ; extra == 'types'
+  - types-pexpect ; extra == 'types'
+  - types-psutil ; extra == 'types'
+  - types-pycurl ; extra == 'types'
+  - types-pygments ; extra == 'types'
+  - types-python-dateutil ; extra == 'types'
+  - types-pytz ; extra == 'types'
+  - types-pyyaml ; extra == 'types'
+  - types-requests ; extra == 'types'
+  - types-setuptools ; extra == 'types'
+  - types-xlrd ; extra == 'types'
+  requires_python: '>=3.11'
 - pypi: https://files.pythonhosted.org/packages/98/d6/33a411115b61dbfc16ad6ad73e71730f6fea654ee3667673bc53ab0e2fe7/pyarrow-25.0.1-cp313-cp313-manylinux_2_28_x86_64.whl
   name: pyarrow
   version: 25.0.1
@@ -7503,6 +7561,32 @@ packages:
   - pylint>=3.0.0 ; extra == 'dev'
   - flit>=3.5.1 ; extra == 'dev'
   requires_python: '>=3.8'
+- pypi: https://files.pythonhosted.org/packages/f3/17/504a5f77bc1998d18761008a400ef096ed66269fb87852aa2f6eb6e9d43c/microfilm-0.3.0-py3-none-any.whl
+  name: microfilm
+  version: 0.3.0
+  sha256: a7efcf3dff964fbcecfbab432d870a376dd52f40c23905cf1573e4eed90db35a
+  requires_dist:
+  - cmap
+  - h5py
+  - imageio
+  - matplotlib
+  - matplotlib-scalebar
+  - natsort
+  - numpy
+  - scikit-image
+  - tifffile
+  - xarray
+  - bioio ; extra == 'multipage'
+  - bioio-tifffile ; extra == 'multipage'
+  - nd2reader ; extra == 'nd2'
+  - imageio-ffmpeg ; extra == 'animation'
+  - ipywidgets ; extra == 'animation'
+  - bioio ; extra == 'all'
+  - bioio-tifffile ; extra == 'all'
+  - imageio-ffmpeg ; extra == 'all'
+  - ipywidgets ; extra == 'all'
+  - nd2reader ; extra == 'all'
+  requires_python: '>=3.9'
 - pypi: https://files.pythonhosted.org/packages/fc/0a/0858f60cb5a6f8f73ec4cdd73eccd9f748d66bfc23304c5c23fa3468094a/polars_runtime_32-1.44.1-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
   name: polars-runtime-32
   version: 1.44.1

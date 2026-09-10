@@ -27,7 +27,6 @@ tomlkit = ">=0.15.1,<0.16"
 psutil = ">=7.2.2,<8"
 tqdm = ">=4.70.0,<5"
 scanpy = ">=1.12.4,<2"
-# tifffile = ">=2026.5.2"
 zarr = "==3.1.5"
 
 [constraints]
@@ -36,3 +35,4 @@ pandas = ">2.0,<3.0"
 [target.lida.pypi-dependencies]
 ovrlpy = ">=1.2.0, <2"
 DINOv3 = { git = "https://github.com/facebookresearch/dinov3", rev = "6876159a11b4df116f30f667f8c9888617df0751" }
+microfilm = "<=0.3.0"

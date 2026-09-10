@@ -1,3 +1,5 @@
+from phenium.exceptions import NotImplemented
+
 import os
 from math import sqrt
 from pathlib import Path
@@ -5,23 +7,15 @@ from itertools import product
 from multiprocessing import cpu_count
 from multiprocessing.pool import Pool
 
+
+import numpy as np
 import cv2
 import tifffile
-import numpy as np
+from shapely import Polygon
 
 from typing import Any, Union, List, Tuple
 from pathlib import PosixPath
 from numpy.typing import ArrayLike
-
-
-TABLE = pa.lib.Table
-GDF = gpd.geodataframe.GeoDataFrame
-PDF = pl.dataframe.frame.DataFrame
-DF = pd.DataFrame
-
-MPG = geometry.multipolygon.MultiPolygon
-
-
 
 def depth(
     d: dict
@@ -117,9 +111,9 @@ def bboxes_to_sections(
 
 
 def filter_by_location(
-    table: Union[PDF, GDF],
+    table, #: Union[PDF, GDF],
     coords: dict,
-) -> Union[PDF, GDF]:
+): # -> Union[PDF, GDF]:
     """
     Keep entries in `table` that have coordinates in `coords`.
 
@@ -163,3 +157,51 @@ def filter_by_location(
         if table.index.name in table.columns:
             table.drop(table.index.name, axis=1, inplace=True)
     return table
+
+
+def to_cli(tup: tuple):
+    arg, value = tup
+    if isinstance(value, bool):
+        if value:
+            return f'--{arg}'
+        else:
+            return ''
+    elif isinstance(value, (int, float, str)):
+        return f'--{arg} {value}'
+    else:
+        return ''
+
+
+def boundaries_to_mask(table, shape):
+    data = dict()
+    for cell_id in set(table['cell_id']):
+        x = table[table['cell_id'] == cell_id]['vertex_x']
+        y = table[table['cell_id'] == cell_id]['vertex_y']
+        if len(x) >= 4 or len(y) >= 4:
+            data.update(dict(
+                cell_id = Polygon(zip(x,y))
+            ))
+
+    masks = np.zeros(shape)
+    for cell_id, geometry in data.items():
+        mask = np.zeros_like(masks, np.uint8)
+        cv2.fillPoly(mask, np.int32([geometry]), (1,1,1))
+        masks[mask > 0] = cell_id
+
+    return masks, data
+
+
+def transcripts_for_ovrlpy(machine, file_path):
+        if machine == 'xenium':
+            transcripts = ovrlpy.io.read_Xenium(
+                filepath=file_path,
+                min_qv=None,
+                remove_features=ovrlpy.io.XENIUM_CTRLS,
+                n_threads=cpu_count(),
+            )
+        else:
+            raise NotImplementedError(
+                f"Not Implemented to deal with `{machine}`."
+            )
+
+        return transcripts
