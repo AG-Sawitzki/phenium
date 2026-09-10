@@ -14,6 +14,7 @@ from phenium.segment import (
     proseg_wrapper
 )
 
+import json
 from subprocess import Popen
 import multiprocessing as mp
 from pathlib import Path
@@ -48,7 +49,7 @@ class Phenium(object):
         with open(self.config_path) as f:
             self.config = tomlkit.load(f)
 
-    def _load_img(self, img_path, focus=False, pheno=False):
+    def _load_img(self, img_path=None, focus=False, pheno=False):
         if not img_path:
             if focus or pheno:
                 raise NotImplementedError(
@@ -88,7 +89,7 @@ class Phenium(object):
         # currently only transcripts are passed...
         coords = self.sections[str(section)]
         filtered_table = filter_by_location(
-            self.transcripts,
+            table,
             coords
         )
 
@@ -97,7 +98,7 @@ class Phenium(object):
     def get_VSI(self):
         cdf = transcripts_for_ovrlpy(
             machine=self.config['Basics'],
-            file_path=self.input / 'transcripts.parquet',
+            file_path=self.input_dir / 'transcripts.parquet',
         )
         ovrlpy_dataset = ovrlpy.Ovrlp(
             cdf,
@@ -128,16 +129,17 @@ class Phenium(object):
         return ovrlpy_dataset.integrity_map, ovrlpy_dataset.signal_map
 
     def _XOA_masks(self):
-        paths = list(self.input_path.glob('*_boundaries.parquet'))
+        paths = list(self.input_dir.glob('*_boundaries.parquet'))
         for path in paths:
             table = polars.read_parquet()
             masks, polygons = boundaries_to_mask(table, self.img_shape[1:])
         self.XOA = masks
         np.save(
-            self.output_path / 'XOA_masks.npy',
+            self.output_dir / 'XOA_masks.npy',
             allow_pickle=True
         )
-        return None
+        with open(self.output_dir / 'XOA_polygons.json') as f:
+            json.dump(f, polygons)
 
     def run_cellpose(self):
         params = self.config['cellpose']
@@ -151,20 +153,20 @@ class Phenium(object):
             style,
         )
 
-        return None
-
     def _run_proseg(
         self,
         section,
         XOA: bool = False,
         CP: bool = False,
     ) -> None:
-        transcripts_path = self.output_path / f'transcripts_{section}.parquet'
+        transcripts_path = self.output_dir / f'transcripts_{section}.parquet'
+
+        prior_path = ''
 
         if XOA and not CP:
-            prior_path = self.output_path / f'XOA_masks_{section}.npy'
+            prior_path = self.output_dir / f'XOA_masks_{section}.npy'
         if CP and not XOA:
-            prior_path = self.output_path / f'CP_masks_{section}.npy'
+            prior_path = self.output_dir / f'CP_masks_{section}.npy'
 
         proseg_wrapper(
             self.config['proseg'],
@@ -172,5 +174,3 @@ class Phenium(object):
             self.output_dir,
             prior_path
         )
-
-        return None
