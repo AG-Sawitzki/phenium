@@ -2,7 +2,6 @@ from phenium.utils import (
     find_rois,
     bboxes_to_sections,
     filter_by_location,
-    to_cli,
     boundaries_to_mask,
     transcripts_for_ovrlpy,
 )
@@ -15,19 +14,18 @@ from phenium.segment import (
 )
 
 import json
-from subprocess import Popen
-import multiprocessing as mp
-from pathlib import Path
+from pathlib import (
+    PosixPath,
+    Path
+)
 from typing import Union
 
 import numpy as np
+import polars as pl
 import tomlkit
 import tifffile
 import ovrlpy
-import polars
 import zarr
-
-PDF = polars.dataframe.frame.DataFrame
 
 
 class Phenium(object):
@@ -40,33 +38,37 @@ class Phenium(object):
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir)
         self.config_path = Path(config_path)
-        self._load_config()
-        self.machine = self.config['Basics']['type']
-        self.pixelsizeXY_SRT = self.config['Basics']['pixelsize_xy']
-        self.pixelsizeZ_SRT = self.config['Basics']['pixelsize_z']
 
-    def _load_config(self):
+    def _parse_config(self):
         with open(self.config_path) as f:
-            self.config = tomlkit.load(f)
+            config = tomlkit.load(f)
 
-    def _load_img(self, img_path=None, focus=False, pheno=False):
+        basics = config['Basics']
+        self.machine = basics['machine']
+        self.priors = basics['priors']
+        self.pixelsizeXY_SRT = basics['pixelsize_xy']
+        self.pixelsizeZ_SRT = basics['pixelsize_z']
+
+        self.CP_params = config['cellpose']
+        self.PS_params = config['proseg']
+
+    def _load_img(self, img_path=None):
         if not img_path:
-            if focus or pheno:
-                raise NotImplementedError(
-                    'Not Implemented to load focus or pheno image as zarr.'
-                )
-            else:
-                img_path = self.input_dir / 'morphology.ome.tif'
+            # if 'smth' in img_path:
+            #     raise NotImplementedError(
+            #         'Not Implemented to load focus or pheno image as zarr.'
+            #     )
+            # else:
+            img_path = self.input_dir / 'morphology.ome.tif'
 
         img_store = tifffile.imread(
             img_path,
             aszarr=True
         )
-
         self.img_zarr = zarr.open(img_store, mode='r')
         self.img_shape = self.img_zarr['0'].shape
 
-    def find_sections(self):
+    def _find_sections(self):
         self._load_img()
         subresolution_lvl = len(self.img_zarr)
         bboxes = find_rois(
@@ -80,25 +82,125 @@ class Phenium(object):
         )
         return self.sections
 
-    def filter_for_section(
+    def _get_shape(self, section):
+        coords = self.sections[section]
+        x = coords['x'][1]-coords['x'][0]
+        y = coords['y'][1]-coords['y'][0]
+        return x, y
+
+    def _filter_for_section(
             self,
-            section,
             table,
-        ) -> polars.dataframe.frame.DataFrame:
+            section,
+        ) -> pl.dataframe.frame.DataFrame:
         # must be adapted for boundaries!
         # currently only transcripts are passed...
-        coords = self.sections[str(section)]
+        coords = self.sections[section]
         filtered_table = filter_by_location(
             table,
-            coords
+            coords,
+            pixelsize=self.pixelsizeXY_SRT
         )
 
         return filtered_table
 
+    def _XOA_masks(self, section):
+        path = self.input_dir / 'cell_boundaries.parquet'
+        table = pl.read_parquet(path)
+        table = self.filter_for_section(section, table)
+        # shape = self.get_shape(section)
+        masks, polygons = boundaries_to_mask(table, self.roi_shape)
+        np.save(
+            self.output_dir / f'XOA_masks_{section}.npy',
+            masks,
+            allow_pickle=True
+        )
+        with open(self.output_dir / f'XOA_polygons_{section}.json') as f:
+            json.dump(f, polygons)
+
+    def _run_cellpose(self, section):
+        model_params = self.CP_params['model']
+        eval_params = self.CP_params['eval']
+        style = self.CP_params['style']
+
+        if style == 'pheno':
+            path = self.input_dir / '...'
+        if style == 'focus':
+            path = self.input_dir / '---'
+        
+        self._load_img(path)
+        coords = self.sections[section]
+        img = self.img_zarr['0'][
+            ...,
+            coords['x'][0]:coords['x'][1],
+            coords['y'][1]:coords['y'][1]
+        ]
+
+        masks, flows, styles = cellpose_wrapper(
+            img,
+            model_params,
+            eval_params,
+            style,
+        )
+
+        np.save(
+            self.output_dir / f'CP_masks_{section}.npy',
+            masks,
+            allow_pickle=True
+        )
+
+    def prepare(self, section):
+        '''
+        Prepare `Phenium` and the input for the Segmentation and Deconvolution.
+        '''
+        self._parse_config()
+
+        self._find_sections()
+
+        if section in self.sections:
+            self.section = section
+        else:
+            KeyError(f'This section (`{section}`) does not exist.')
+            return None
+
+        self.roi_shape = self._get_shape(section)
+    
+        if self.priors == 'CP':
+            self._run_cellpose(
+                section
+            )
+            self.prior_path = self.output_dir / f'CP_masks_{section}.npy'
+        if self.priors == 'XOA':
+            self._XOA_masks(
+                section
+            )
+            self.prior_path = self.output_dir / f'XOA_masks_{section}.npy'
+        if self.priors == 'None':
+            self.prior_path = ''
+
+        transcripts = pl.read_parquet(self.input_dir / 'transcripts.parquet')
+        transcripts = self._filter_for_section(
+            transcripts,
+            self.section
+        )
+
+        self.transcripts_path = (
+            self.output_dir / f'transcripts_{section}.parquet'
+        )
+        transcripts.write_parquet(
+            self.transcripts_path,
+            compression='snappy',
+            use_pyarrow=True,
+            pyarrow_options=dict(
+                version = '1.0',
+            )
+        )
+
+
     def get_VSI(self):
         cdf = transcripts_for_ovrlpy(
-            machine=self.config['Basics'],
-            file_path=self.input_dir / 'transcripts.parquet',
+            machine=self.machine,
+            file_path=self.transcripts_path,
         )
         ovrlpy_dataset = ovrlpy.Ovrlp(
             cdf,
@@ -128,49 +230,30 @@ class Phenium(object):
 
         return ovrlpy_dataset.integrity_map, ovrlpy_dataset.signal_map
 
-    def _XOA_masks(self):
-        paths = list(self.input_dir.glob('*_boundaries.parquet'))
-        for path in paths:
-            table = polars.read_parquet()
-            masks, polygons = boundaries_to_mask(table, self.img_shape[1:])
-        self.XOA = masks
-        np.save(
-            self.output_dir / 'XOA_masks.npy',
-            allow_pickle=True
-        )
-        with open(self.output_dir / 'XOA_polygons.json') as f:
-            json.dump(f, polygons)
-
-    def run_cellpose(self):
-        params = self.config['cellpose']
-        model_params = params['model']
-        eval_params = params['eval']
-        style = params['style']
-
-        masks, flows, styles = cellpose_wrapper(
-            model_params,
-            eval_params,
-            style,
-        )
-
     def _run_proseg(
         self,
-        section,
-        XOA: bool = False,
-        CP: bool = False,
+        # section: Union[str, int],
+        prior_path: Union[PosixPath, str] = '',
     ) -> None:
-        transcripts_path = self.output_dir / f'transcripts_{section}.parquet'
-
-        prior_path = ''
-
-        if XOA and not CP:
-            prior_path = self.output_dir / f'XOA_masks_{section}.npy'
-        if CP and not XOA:
-            prior_path = self.output_dir / f'CP_masks_{section}.npy'
 
         proseg_wrapper(
-            self.config['proseg'],
-            transcripts_path,
+            self.PS_params,
+            self.transcripts_path,
             self.output_dir,
+            self.pixelsizeXY_SRT,
+            self.machine,
             prior_path
         )
+
+
+    # ... more functions
+
+    # def {function for running proseg, get_VSI, compare_VSI}
+    #   assign transcripts to layers
+    # 
+    #   get_VSI and compare_VSI must be optional...
+    #   hence maybe separate into two functions
+
+    # ... more functions
+
+    # def {function for running cluster_CellTypes, assign_CT, stain_to_Cell}

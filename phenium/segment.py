@@ -3,30 +3,34 @@ from phenium.utils import (
 )
 
 import multiprocessing as mp
+from functools import partial
 from subprocess import Popen
 
 from cellpose import models
 
 
-def cellpose_wrapper(model_params, eval_params, style):
+def cellpose_wrapper(img, model_params, eval_params):
     model = models.CellposeModel(**model_params)
-    if style == 'pheno':
-        # load_as_zarr phenocycler
-        pass
-    elif style == 'focus':
-        # load_as_zarr morphology_focus
-        pass
-    else:
-        raise NotImplementedError(f'Style `{style}` is not implemented.')
+    # if style == 'pheno':
+    #     # load_as_zarr phenocycler for coords
+    #     pass
+    # elif style == 'focus':
+    #     # load_as_zarr morphology_focus for coords
+    #     pass
+    # else:
+    #     raise NotImplementedError(f'Style `{style}` is not implemented.')
     
     masks, flows, styles = model.eval(img, **eval_params)
+    return masks, flows, styles
 
 
 def proseg_wrapper(
     proseg_params,
     transcripts_path,
     output_dir,
-    prior_path
+    pixelsize,
+    machine,
+    prior_path = '',
 ):
     for category, dic in proseg_params.items():
         if category == 'general':
@@ -40,19 +44,30 @@ def proseg_wrapper(
                         value = 4
                 elif arg == 'voxel-size':
                     if not value:
-                        value = self.config['ImageStats']['pixelsize_xy']
+                        value = pixelsize
                 elif arg == 'burnin-voxel-size':
                     if not value:
-                        value = self.config['ImageStats']['pixelsize_xy']*8
+                        value = pixelsize*8
                 else:
                     value = value
                 general.append(
                     f'--{arg} {value}'
                 )
         elif category == 'output':
+            for arg, value in dic.items():
+                if value:
+                    ext = '.parquet'
+                    if arg == 'counts':
+                        ext = '.mtx.gz'
+                    elif 'cell-polygon' in arg:
+                        ext = '.geojson.gz'
+                    dic[arg] = f'{arg}{ext}'
             output = list(map(
-                to_cli,
-                dic.items()
+                partial(
+                    to_cli,
+                    prefix='output-',
+                ),
+                dic.items(),
             ))
             output.append(f'--output-path {output_dir}')
         elif category == 'model':
@@ -71,9 +86,12 @@ def proseg_wrapper(
 
     arguments = general + output + model + diffusion
     if prior_path:
-        arguments += ['--cellpose-masks', f'{prior_path}']
+        arguments += ['--cellpose-masks', str(prior_path)]
 
-    arguments.append(transcripts_path)
+    arguments.append(f'--{machine}')
+    arguments.append(str(transcripts_path))
+
+    arguments.insert(0, 'proseg')
 
     cmd = ' '.join(arguments)
     p = Popen(cmd, shell=True)

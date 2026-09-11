@@ -7,11 +7,13 @@ from itertools import product
 from multiprocessing import cpu_count
 from multiprocessing.pool import Pool
 
-
 import numpy as np
+import polars as pl
+import geopandas as gpd
+from shapely import Polygon
 import cv2
 import tifffile
-from shapely import Polygon
+import ovrlpy
 
 from typing import Any, Union, List, Tuple
 from pathlib import PosixPath
@@ -23,6 +25,19 @@ def depth(
     if isinstance(d, dict):
         return 1 + (max(map(depth, d.values())) if d else 0)
     return 0
+
+
+def to_cli(tup: tuple, prefix = '', suffix = ''):
+    arg, value = tup
+    if isinstance(value, bool):
+        if value:
+            return f'--{prefix}{arg}{suffix}'
+        else:
+            return ''
+    elif isinstance(value, (int, float, str)):
+        return f'--{prefix}{arg}{suffix} {value}'
+    else:
+        return ''
 
 
 def find_rois(
@@ -72,7 +87,6 @@ def find_rois(
         scores.append(w*h)
 
     scores_normed = list(map(lambda x: x/max(scores), scores))
-    print(scores_normed)
 
     ids_to_keep = cv2.dnn.NMSBoxes(
         bboxes,
@@ -113,9 +127,12 @@ def bboxes_to_sections(
 def filter_by_location(
     table, #: Union[PDF, GDF],
     coords: dict,
-): # -> Union[PDF, GDF]:
+    pixelsize: float = None,
+) -> Union[pl.DataFrame, gpd.GeoDataFrame]:
     """
     Keep entries in `table` that have coordinates in `coords`.
+    `coords` and `table` do not have the same units add `pixelsize`.
+    `pixelsize` is applied to `table`, not `coords`.
 
     Parameters
     ----------
@@ -126,6 +143,8 @@ def filter_by_location(
         coords : dict
             Dictionary containing min. x,y and max. x,y.
             For an example, see `gt_section.json`
+        pixelsize : float
+            Size of a pixel in X & Y. Optional.
 
     Returns
     -------
@@ -134,60 +153,82 @@ def filter_by_location(
     """
     assert depth(coords) == 1, \
         f'`coords` incorrect: {coords}\n Consult example .json!'
-    if isinstance(table, PDF):
-        for axis, coords in coords.items():
-            column = [
-                c for c in table.columns if (
-                    f'{axis}_location' in c or f'vertex_{axis}' in c
-                )
-            ][0]
-            var_min, var_max = coords
-            expr = ((pl.col(column)).is_in(np.arange(var_min, var_max+1,1)))
+    if isinstance(table, pl.DataFrame):
+        for axis, extremes in coords.items():
+            var_min, var_max = extremes
+
+            if pixelsize:
+                var_min = var_min * pixelsize
+                var_max = var_max * pixelsize
+            if f'{axis}_location' in table.columns:
+                column = f'{axis}_location'
+            elif f'vertex_{axis}' in table.columns:
+                column = f'vertex_{axis}'
+            else:
+                column = 'x'
+
+            # if pixelsize:
+            #     pixeled = table.select(
+            #         (pl.col(column) / pixelsize).round(0),
+            #     )
+            #     table = table.update(pixeled)
+
+            expr = ((pl.col(column)).is_between(
+                var_min, var_max, closed='both'
+            ))
             table = table.filter(expr)
-    if isinstance(table, GDF):
+    elif isinstance(table, gpd.GeoDataFrame):
         x_min, x_max = coords['x']
         y_min, y_max = coords['y']
+
+        if pixelsize:
+            x_min = x_min * pixelsize
+            x_max = x_max * pixelsize
+            y_min = y_min * pixelsize
+            y_max = y_max * pixelsize
+
         polygon = Polygon([
             (x_min, y_min), (x_max, y_min),
             (x_min, y_max), (x_max, y_max),
             (x_min, y_min),
         ])
+        # if pixelsize:
+        #     geometry = table['geometry'].transform(
+        #         lambda x: (x * np.array([
+        #             1/pixelsize, 1/pixelsize
+        #         ])).round(0)
+        #     )
+        #     table['geometry'] = geometry
         check = table['geometry'].within(polygon)
         table = table[check]
         if table.index.name in table.columns:
             table.drop(table.index.name, axis=1, inplace=True)
-    return table
-
-
-def to_cli(tup: tuple):
-    arg, value = tup
-    if isinstance(value, bool):
-        if value:
-            return f'--{arg}'
-        else:
-            return ''
-    elif isinstance(value, (int, float, str)):
-        return f'--{arg} {value}'
     else:
-        return ''
+        raise NotImplementedError(
+            f'Not Implemented to deal with {type(table)}.'
+        )
+
+
+    return table
 
 
 def boundaries_to_mask(table, shape):
     data = dict()
+    masks = np.zeros(shape)
+
     for cell_id in set(table['cell_id']):
         x = table[table['cell_id'] == cell_id]['vertex_x']
         y = table[table['cell_id'] == cell_id]['vertex_y']
         if len(x) >= 4 or len(y) >= 4:
+
+            geometry = Polygon(zip(x,y))
             data.update(dict(
-                cell_id = Polygon(zip(x,y))
+                cell_id = geometry
             ))
-
-    masks = np.zeros(shape)
-    for cell_id, geometry in data.items():
-        mask = np.zeros_like(masks, np.uint8)
-        cv2.fillPoly(mask, np.int32([geometry]), (1,1,1))
-        masks[mask > 0] = cell_id
-
+            mask = np.zeros_like(masks, np.uint8)
+            cv2.fillPoly(mask, np.int32([geometry]), (1,1,1))
+            masks[mask > 0] = cell_id
+    
     return masks, data
 
 

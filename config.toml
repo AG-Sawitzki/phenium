@@ -9,8 +9,14 @@ mail = 'philomina-lillie.normann@bih-charite.de'
 # micrometer per pixel
 pixelsize_xy = 0.2125
 pixelsize_z = 3.0000
-# ....
-type = 'xenium'
+# currently only supports xenium
+machine = 'xenium'
+# choose a prior
+# either 'CP' for cellpose
+# or 'XOA' for Xenium Onboard Analysis
+# or 'None' for priorless proseg-segmenation
+priors = 'None'
+
 
 [proseg]
 # run `proseg --help` in the terminal after installing
@@ -101,7 +107,6 @@ diffusion-proposal-sigma = 4
 diffusion-proposal-sigma-z = 0.2
 
 
-
 [cellpose]
 # style of segmentation.
 # Either: 'pheno' for PhenoCycler input
@@ -112,7 +117,7 @@ style = 'focus'
 # consult cellpose/models.py#L104 for description of parameters
 gpu = true
 # available models: cpdino, cpsam_v2, cpdino-vitb, cpsam
-pretrained_model = 'cpsam_v2'
+pretrained_model = 'cpdino'
 # model_type = not used in v4.0.1+
 # diam_mean = unknown, not used in v4.0.1+
 device = 'cuda:0'
