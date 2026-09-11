@@ -39,3 +39,4 @@ microfilm = "<=0.3.0"
 rapids-singlecell-cu12 = ">=0.17.0, <0.18"
 spatialdata = { version = ">=0.8.0, <0.9", extras = ["torch"] }
 pyarrow = ">=25.0.1, <26"
+fast-matrix-market = ">=1.7.6, <2"

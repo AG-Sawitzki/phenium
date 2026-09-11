@@ -219,3 +219,8 @@ __marimo__/
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+
+
+# weird stuff...
+membership_debug.txt
+rebalanced_membership_debug.txt

@@ -255,5 +255,14 @@ class Phenium(object):
     #   hence maybe separate into two functions
 
     # ... more functions
+    # def load_counts():
+
+    # def run_leiden():
+
+    # def assign_CT_probabilities():
+
+    # def assign_stain_to_CT():
+
+    # def assign_pixel_to_cell():
 
     # def {function for running cluster_CellTypes, assign_CT, stain_to_Cell}

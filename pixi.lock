@@ -481,6 +481,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/fb/76/641ae371508676492379f16e2fa48f4e2c11741bd63c48be4b12a6b09cba/aiosignal-1.4.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/fc/0a/0858f60cb5a6f8f73ec4cdd73eccd9f748d66bfc23304c5c23fa3468094a/polars_runtime_32-1.44.1-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/fc/75/0576b03f7889ad25b5385b4f6c69e0543713425a6f193b056c9b0a2e65ce/formulaic-1.2.2-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/fe/eb/84695e59f482de0b499204233b44a90e7b1982a96f0b4a27af4861d7bf75/fast_matrix_market-1.7.6.tar.gz
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-8_kmp_llvm.conda
   build_number: 8
@@ -8244,3 +8245,14 @@ packages:
   - sympy>=1.3,!=1.10 ; extra == 'calculus'
   - polars>=1 ; extra == 'polars'
   requires_python: '>=3.9'
+- pypi: https://files.pythonhosted.org/packages/fe/eb/84695e59f482de0b499204233b44a90e7b1982a96f0b4a27af4861d7bf75/fast_matrix_market-1.7.6.tar.gz
+  name: fast-matrix-market
+  version: 1.7.6
+  sha256: 38f36d28e780316685b939c439618f06579199d736ebdcda9b9dea8e605c102e
+  requires_dist:
+  - pytest ; extra == 'test'
+  - scipy ; extra == 'test'
+  - threadpoolctl ; extra == 'test'
+  - pytest ; extra == 'testmin'
+  - threadpoolctl ; extra == 'testmin'
+  requires_python: '>=3.7'
