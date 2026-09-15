@@ -25,3 +25,9 @@
     - [ ] segment with proseg
     - [ ] separate transcripts of each layer
         - a layer should be define by the thicknes of the sample
+
+# SC Analysis
+- [ ] PCA
+- [ ] Nearest Neighbour
+- [ ] UMAP
+- [ ] leiden?

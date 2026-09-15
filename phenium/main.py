@@ -4,6 +4,8 @@ from phenium.utils import (
     filter_by_location,
     boundaries_to_mask,
     transcripts_for_ovrlpy,
+    load_counts,
+    get_affine_matrix,
 )
 from phenium.exceptions import (
     NotImplemented
@@ -13,6 +15,8 @@ from phenium.segment import (
     proseg_wrapper
 )
 
+import xml.etree.ElementTree as ET
+import multiprocessing as mp
 import json
 from pathlib import (
     PosixPath,
@@ -20,6 +24,7 @@ from pathlib import (
 )
 from typing import Union
 
+import fast_matrix_market as fmm
 import numpy as np
 import polars as pl
 import tomlkit
@@ -52,21 +57,26 @@ class Phenium(object):
         self.CP_params = config['cellpose']
         self.PS_params = config['proseg']
 
-    def _load_img(self, img_path=None):
-        if not img_path:
-            # if 'smth' in img_path:
-            #     raise NotImplementedError(
-            #         'Not Implemented to load focus or pheno image as zarr.'
-            #     )
-            # else:
-            img_path = self.input_dir / 'morphology.ome.tif'
-
+    def _load_imgs(self):
+        # only load PhenoCycler or also morphology?
         img_store = tifffile.imread(
-            img_path,
+            self.input_dir / 'PhenoCycler_img.qptiff',
             aszarr=True
         )
         self.img_zarr = zarr.open(img_store, mode='r')
         self.img_shape = self.img_zarr['0'].shape
+
+    def _affine_matrix(self):
+        # find warp-matrix
+        im1_store = tifffile.imread('...', aszarr=True)
+        im1_zarr = zarr.open(im1_store, mode='r')
+        im2_store = tifffile.imread('...', aszarr=True)
+        im2_zarr = zarr.open(im2_store, mode='r')
+
+        im1_arr = np.array(im1_zarr[str(len(im1_zarr)-1)][5], dtype=np.uint8)
+        im2_arr = np.array(im2_zarr[str(len(im2_zarr)-1)][0], dtype=np.uint8)
+        matrix = get_affine_matrix(im1_arr, im2_arr)
+        return matrix
 
     def _find_sections(self):
         self._load_img()
@@ -160,6 +170,7 @@ class Phenium(object):
         if section in self.sections:
             self.section = section
         else:
+            # this error isn't returned
             KeyError(f'This section (`{section}`) does not exist.')
             return None
 
@@ -196,11 +207,10 @@ class Phenium(object):
             )
         )
 
-
-    def get_VSI(self):
+    def get_VSI(self, transcripts_path, **kwargs):
         cdf = transcripts_for_ovrlpy(
             machine=self.machine,
-            file_path=self.transcripts_path,
+            file_path=transcripts_path,
         )
         ovrlpy_dataset = ovrlpy.Ovrlp(
             cdf,
@@ -216,11 +226,12 @@ class Phenium(object):
             # cumap_kwargs,
             # random_state,
         )
+
         # should be split into the processes
         # to include all params for
         # process_coordinates
         # fit_transcripts
-        # compute_VSI()
+        # compute_VSI
         ovrlpy_dataset.analyse(
             # gridsize,
             # min_transcripts,
@@ -232,8 +243,6 @@ class Phenium(object):
 
     def _run_proseg(
         self,
-        # section: Union[str, int],
-        prior_path: Union[PosixPath, str] = '',
     ) -> None:
 
         proseg_wrapper(
@@ -242,7 +251,7 @@ class Phenium(object):
             self.output_dir,
             self.pixelsizeXY_SRT,
             self.machine,
-            prior_path
+            self.prior_path
         )
 
 
@@ -255,7 +264,9 @@ class Phenium(object):
     #   hence maybe separate into two functions
 
     # ... more functions
-    # def load_counts():
+    def _load_counts(self):
+        counts_path = self.output_path / 'counts.mtx.gz'
+        self.counts = load_counts(counts_path)
 
     # def run_leiden():
 

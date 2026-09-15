@@ -6,14 +6,16 @@ from pathlib import Path
 from itertools import product
 from multiprocessing import cpu_count
 from multiprocessing.pool import Pool
+import xml.etree.ElementTree as ET
 
+import fast_matrix_market as fmm
 import numpy as np
 import polars as pl
 import geopandas as gpd
 from shapely import Polygon
 import cv2
-import tifffile
 import ovrlpy
+import tifffile
 
 from typing import Any, Union, List, Tuple
 from pathlib import PosixPath
@@ -246,3 +248,46 @@ def transcripts_for_ovrlpy(machine, file_path):
             )
 
         return transcripts
+
+
+def load_counts(file_path):
+    counts = fmm.mmread(file_path, parallelism=cpu_count())
+    return counts
+
+
+def get_pixel_size(img_path) -> Tuple[float, float, float]:
+    '''
+    Get pixel size from xml metadata of (OME)Tiff.
+    Returns None for nonexisting Physical Sizes.
+    '''
+    with tifffile.TiffFile(img_path) as tiff:
+        ImageDescription = tiff.pages[0].tags[270].value
+        root = ET.fromstring(ImageDescription)
+        pixels = root.find('.//*[@PhysicalSizeX]')
+        px_size_X = pixels.get('PhysicalSizeX')
+        px_size_Y = pixels.get('PhysicalSizeY')
+        px_size_Z = pixels.get('PhysicalSizeZ')
+    return float(px_size_X), float(px_size_Y), float(px_size_Z)
+
+
+def get_affine_matrix(img1, img2):
+    sz = img1.shape
+
+    # im1_gray = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
+    # im2_gray = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
+
+    warp_mode = cv2.MOTION_TRANSLATION
+
+    warp_matrix = np.eye(2, 3, dtype=np.float32)
+
+    number_of_iterations = 5000
+
+    termination_eps = 1e-10
+
+    criteria = (
+        cv2.TERM_CRITERIA_EPS or cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps
+    )
+
+    im2_aligned = cv2.warpAffine(
+        img2, warp_matrix, (sz[1],sz[0]), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP
+    )

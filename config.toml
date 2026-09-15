@@ -5,10 +5,6 @@ mail = 'philomina-lillie.normann@bih-charite.de'
 
 
 [Basics]
-# stats of the morphology.ome.tif
-# micrometer per pixel
-pixelsize_xy = 0.2125
-pixelsize_z = 3.0000
 # currently only supports xenium
 machine = 'xenium'
 # choose a prior
@@ -148,3 +144,30 @@ compute_masks = true
 # progress = # requires pyqt bar, which opens in external window
 [methods.cpsam.eval.normalize]
 norm3D = true
+
+
+# the below might be removed.
+[ovrlpy]
+
+[ovrlpy.Ovrlp]
+KDE_bandwidth = 2.5
+min_distance = 8
+n_components = 30
+patch_length = 500
+umap_kwargs= 'UMAP_2D_PARAMS'
+cumap_kwargs = 'UMAP_RGB_PARAMS'
+random_state = 0
+
+[ovrlpy.process_coordinates]
+gridsize = 1
+method = 'message_passing'
+shift = true
+n_iter = 20
+return_shift = false
+
+[ovrlpy.fit_transcripts]
+min_transcripts = 10
+fit_umap = true
+
+[ovrlpy.compute_VSI]
+min_transcripts = 2
