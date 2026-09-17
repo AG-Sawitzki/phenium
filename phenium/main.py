@@ -4,8 +4,8 @@ from phenium.utils import (
     filter_by_location,
     boundaries_to_mask,
     transcripts_for_ovrlpy,
-    load_counts,
     get_affine_matrix,
+    get_pixel_size,
 )
 from phenium.exceptions import (
     NotImplemented
@@ -36,11 +36,13 @@ import zarr
 class Phenium(object):
     def __init__(
             self,
-            input_dir,
+            SRT_dir,
+            IHC_path,
             output_dir,
             config_path,
         )-> None:
-        self.input_dir = Path(input_dir)
+        self.SRT_dir = Path(SRT_dir)
+        self.IHC_path = Path(IHC_path)
         self.output_dir = Path(output_dir)
         self.config_path = Path(config_path)
 
@@ -48,47 +50,49 @@ class Phenium(object):
         with open(self.config_path) as f:
             config = tomlkit.load(f)
 
-        basics = config['Basics']
-        self.machine = basics['machine']
-        self.priors = basics['priors']
-        self.pixelsizeXY_SRT = basics['pixelsize_xy']
-        self.pixelsizeZ_SRT = basics['pixelsize_z']
+        self.machine = config['Basics']['machine']
+        self.priors = config['Basics']['priors']
 
         self.CP_params = config['cellpose']
         self.PS_params = config['proseg']
 
     def _load_imgs(self):
-        # only load PhenoCycler or also morphology?
-        img_store = tifffile.imread(
-            self.input_dir / 'PhenoCycler_img.qptiff',
+        # load morphology_focus image
+        SRT_store = tifffile.imread(
+            self.SRT_dir / 'morphology_focus/ch0000_dapi.ome.tif',
             aszarr=True
         )
-        self.img_zarr = zarr.open(img_store, mode='r')
-        self.img_shape = self.img_zarr['0'].shape
+        self.SRT_zarr = zarr.open(SRT_store, mode='r')
+        self.SRT_shape = self.SRT_zarr['0'].shape
+
+        self.SRT_pxsize = get_pixel_size(
+            self.SRT_dir / 'morphology_focus/ch0000_dapi.ome.tif'
+        )
+
+        # load phenocycler image
+        IHC_store = tifffile.imread(
+            self.IHC_path,
+            aszarr=True
+        )
+        self.IHC_zarr = zarr.open(IHC_store, mode='r')
+        self.IHC_shape = self.IHC_zarr['0'].shape
+
+
 
     def _affine_matrix(self):
-        # find warp-matrix
-        im1_store = tifffile.imread('...', aszarr=True)
-        im1_zarr = zarr.open(im1_store, mode='r')
-        im2_store = tifffile.imread('...', aszarr=True)
-        im2_zarr = zarr.open(im2_store, mode='r')
-
-        im1_arr = np.array(im1_zarr[str(len(im1_zarr)-1)][5], dtype=np.uint8)
-        im2_arr = np.array(im2_zarr[str(len(im2_zarr)-1)][0], dtype=np.uint8)
-        matrix = get_affine_matrix(im1_arr, im2_arr)
+        matrix = get_affine_matrix(..., ...)
         return matrix
 
     def _find_sections(self):
-        self._load_img()
-        subresolution_lvl = len(self.img_zarr)
+        subresolution_lvl = len(self.SRT_zarr)
         bboxes = find_rois(
-            self.img_shape,
-            self.img_zarr[str(subresolution_lvl-1)]
+            self.SRT_shape,
+            self.SRT_zarr[str(subresolution_lvl-1)]
         )
         self.sections = bboxes_to_sections(
             bboxes,
-            self.img_shape,
-            self.img_zarr[str(subresolution_lvl-1)].shape
+            self.SRT_shape,
+            self.SRT_zarr[str(subresolution_lvl-1)].shape
         )
         return self.sections
 
@@ -114,6 +118,10 @@ class Phenium(object):
 
         return filtered_table
 
+    def homographyMatrix(self):
+        ...
+        return self.hMatrix
+
     def _XOA_masks(self, section):
         path = self.input_dir / 'cell_boundaries.parquet'
         table = pl.read_parquet(path)
@@ -133,14 +141,13 @@ class Phenium(object):
         eval_params = self.CP_params['eval']
         style = self.CP_params['style']
 
-        if style == 'pheno':
-            path = self.input_dir / '...'
         if style == 'focus':
-            path = self.input_dir / '---'
+            zrr = self.SRT_zarr
+        if style == 'pheno':
+            zrr = self.IHC_zarr
         
-        self._load_img(path)
         coords = self.sections[section]
-        img = self.img_zarr['0'][
+        img = zrr['0'][
             ...,
             coords['x'][0]:coords['x'][1],
             coords['y'][1]:coords['y'][1]
@@ -164,8 +171,9 @@ class Phenium(object):
         Prepare `Phenium` and the input for the Segmentation and Deconvolution.
         '''
         self._parse_config()
-
+        self._load_imgs()
         self._find_sections()
+        self.homographyMatrix()
 
         if section in self.sections:
             self.section = section
@@ -181,13 +189,18 @@ class Phenium(object):
                 section
             )
             self.prior_path = self.output_dir / f'CP_masks_{section}.npy'
-        if self.priors == 'XOA':
+        elif self.priors == 'XOA':
             self._XOA_masks(
                 section
             )
             self.prior_path = self.output_dir / f'XOA_masks_{section}.npy'
-        if self.priors == 'None':
+        else:
             self.prior_path = ''
+
+        print(
+            f' Priors set to {self.priors}.'
+            f'\n Prior_path: {self.prior_path}'
+        )
 
         transcripts = pl.read_parquet(self.input_dir / 'transcripts.parquet')
         transcripts = self._filter_for_section(
@@ -266,7 +279,7 @@ class Phenium(object):
     # ... more functions
     def _load_counts(self):
         counts_path = self.output_path / 'counts.mtx.gz'
-        self.counts = load_counts(counts_path)
+        self.counts = fmm.mmread(counts_path, parallelism=mp.cpu_count())
 
     # def run_leiden():
 

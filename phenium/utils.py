@@ -21,6 +21,7 @@ from typing import Any, Union, List, Tuple
 from pathlib import PosixPath
 from numpy.typing import ArrayLike
 
+
 def depth(
     d: dict
 ) -> int:
@@ -248,12 +249,6 @@ def transcripts_for_ovrlpy(machine, file_path):
             )
 
         return transcripts
-
-
-def load_counts(file_path):
-    counts = fmm.mmread(file_path, parallelism=cpu_count())
-    return counts
-
 
 def get_pixel_size(img_path) -> Tuple[float, float, float]:
     '''
