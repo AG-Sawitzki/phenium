@@ -20,9 +20,10 @@
         - abs signal difference
         - avg integrity before & after (?)
 
-## Imag Registration
+# Imag Registration
 - [ ] stars this is taking ages...
 - tried:
+    - OPCV ECC + Homography
     - OPCV SIFT + FLANN + Homography
     - OPCV SIFT + BF + Homography
     - OPCV ORB + FLANN + Homography
@@ -30,9 +31,13 @@
     - DIPY Affine
     - DIPY Diffeomorphic
     - simpleITK M1-4, M3 works "best"
+- trying with scaled IHC img!
+    - OPCV ECC + Homography
+    - OPCV SIFT + FLANN + Homography
+    - OPCV SIFT + BF + Homography
+    - simpleITK M3<M1<M2~M4
 
-
-## after proseg
+# after proseg
 - [ ] run ovrlpy on proseg-separated transcripts
     - [ ] segment with proseg
     - [ ] separate transcripts of each layer

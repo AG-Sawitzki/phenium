@@ -17,7 +17,7 @@ import cv2
 import ovrlpy
 import tifffile
 
-from typing import Any, Union, List, Tuple
+from typing import Any, Union, List, Tuple, overload
 from pathlib import PosixPath
 from numpy.typing import ArrayLike
 
@@ -62,9 +62,9 @@ def find_rois(
         out : ArrayLike or list
             Contours of significant size.
     """
-    z, y, x = shape_org
+    c, y, x = shape_org
 
-    subres_centre = np.uint8(img_subres[z//2])
+    subres_centre = np.uint8(img_subres)
 
     subres_dilated = cv2.dilate(
         subres_centre,
@@ -104,13 +104,31 @@ def find_rois(
     return bboxes_sorted
 
 
+@overload
 def bboxes_to_sections(
     bboxes: List[ArrayLike],
     shape_org: Tuple,
-    shape_subres: Tuple,
+    subres: Tuple,
 ) -> dict:
-    z, y, x = shape_org
-    z_, y_s, x_s = shape_subres
+    pass
+@overload
+def bboxes_to_sections(
+    bboxes: List[ArrayLike],
+    shape_org: Tuple,
+    subres: ArrayLike,
+) -> Tuple[dict, ArrayLike]:
+    pass
+def bboxes_to_sections(
+    bboxes,
+    shape_org,
+    subres,
+):
+    c, y, x = shape_org
+    if isinstance(subres, tuple):
+        c_s, y_s, x_s = subres
+    else:
+        marked_img = np.uint8(subres[0, ...])
+        c_s, y_s, x_s = marked_img.shape 
 
     rf_x = int(x/x_s)
     rf_y = int(y/y_s)
@@ -123,8 +141,26 @@ def bboxes_to_sections(
             'x': [int(x*rf_x), int(x+(w*rf_x))],
             'y': [int(y*rf_y), int(y+(h*rf_y))]
         }
-    
-    return sections
+        if not isinstance(subres, tuple):
+            cv2.rectangle(
+                marked_img, (x, y), (x+w, y+h),
+                (255,)*3, 2
+            )
+            cv2.putText(
+                marked_img,
+                text=str(section),
+                org=(int(x+w/4), int(y+h/2)),
+                fontFace=cv2.FONT_HERSHEY_PLAIN,
+                fontScale=2,
+                color=(255,)*3,
+                thickness=2,
+                bottomLeftOrigin=False,
+            )
+
+    if isinstance(subres, tuple):
+        return sections
+    else:
+        return sections, marked_img
 
 
 def filter_by_location(
@@ -236,19 +272,20 @@ def boundaries_to_mask(table, shape):
 
 
 def transcripts_for_ovrlpy(machine, file_path):
-        if machine == 'xenium':
-            transcripts = ovrlpy.io.read_Xenium(
-                filepath=file_path,
-                min_qv=None,
-                remove_features=ovrlpy.io.XENIUM_CTRLS,
-                n_threads=cpu_count(),
-            )
-        else:
-            raise NotImplementedError(
-                f"Not Implemented to deal with `{machine}`."
-            )
+    if machine == 'xenium':
+        transcripts = ovrlpy.io.read_Xenium(
+            filepath=file_path,
+            min_qv=None,
+            remove_features=ovrlpy.io.XENIUM_CTRLS,
+            n_threads=cpu_count(),
+        )
+    else:
+        raise NotImplementedError(
+            f"Not Implemented to deal with `{machine}`."
+        )
 
-        return transcripts
+    return transcripts
+
 
 def get_pixel_size(img_path) -> Tuple[float, float, float]:
     '''
@@ -257,11 +294,13 @@ def get_pixel_size(img_path) -> Tuple[float, float, float]:
     '''
     with tifffile.TiffFile(img_path) as tiff:
         ImageDescription = tiff.pages[0].tags[270].value
-        root = ET.fromstring(ImageDescription)
-        pixels = root.find('.//*[@PhysicalSizeX]')
-        px_size_X = pixels.get('PhysicalSizeX')
-        px_size_Y = pixels.get('PhysicalSizeY')
-        px_size_Z = pixels.get('PhysicalSizeZ')
+
+    root = ET.fromstring(ImageDescription)
+    pixels = root.find('.//*[@PhysicalSizeX]')
+    px_size_X = pixels.get('PhysicalSizeX')
+    px_size_Y = pixels.get('PhysicalSizeY')
+    px_size_Z = pixels.get('PhysicalSizeZ')
+
     return float(px_size_X), float(px_size_Y), float(px_size_Z)
 
 

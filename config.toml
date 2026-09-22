@@ -109,6 +109,8 @@ diffusion-proposal-sigma-z = 0.2
 # Either: 'pheno' for PhenoCycler input
 # or 'focus' for morphology_focus input.
 style = 'focus'
+# dapi and membrane channel-positions
+channels = [0, 1]
 
 [cellpose.model]
 # consult cellpose/models.py#L104 for description of parameters

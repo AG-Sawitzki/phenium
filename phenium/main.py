@@ -4,7 +4,6 @@ from phenium.utils import (
     filter_by_location,
     boundaries_to_mask,
     transcripts_for_ovrlpy,
-    get_affine_matrix,
     get_pixel_size,
 )
 from phenium.exceptions import (
@@ -15,7 +14,6 @@ from phenium.segment import (
     proseg_wrapper
 )
 
-import xml.etree.ElementTree as ET
 import multiprocessing as mp
 import json
 from pathlib import (
@@ -46,6 +44,12 @@ class Phenium(object):
         self.output_dir = Path(output_dir)
         self.config_path = Path(config_path)
 
+        self._parse_config()
+        self.load_imgs()
+        self.find_sections()
+
+        print('Initialized. Review marked images and provide sections.')
+
     def _parse_config(self):
         with open(self.config_path) as f:
             config = tomlkit.load(f)
@@ -56,7 +60,11 @@ class Phenium(object):
         self.CP_params = config['cellpose']
         self.PS_params = config['proseg']
 
-    def _load_imgs(self):
+    def load_imgs(self):
+        '''
+        Load the SRT and IHC images as zarr-storages, retrieves the pixelsize,
+        and add the shape to the object variables.
+        '''
         # load morphology_focus image
         SRT_store = tifffile.imread(
             self.SRT_dir / 'morphology_focus/ch0000_dapi.ome.tif',
@@ -77,29 +85,57 @@ class Phenium(object):
         self.IHC_zarr = zarr.open(IHC_store, mode='r')
         self.IHC_shape = self.IHC_zarr['0'].shape
 
+        self.IHC_pxsize = get_pixel_size(
+            self.IHC_path
+        )
 
+        self.scaling_factor = self.IHC_pxsize[0]/self.SRT_pxsize[0]
 
-    def _affine_matrix(self):
-        matrix = get_affine_matrix(..., ...)
-        return matrix
-
-    def _find_sections(self):
+    def find_sections(self):
         subresolution_lvl = len(self.SRT_zarr)
         bboxes = find_rois(
             self.SRT_shape,
             self.SRT_zarr[str(subresolution_lvl-1)]
         )
-        self.sections = bboxes_to_sections(
+        self.SRT_sections, marked_img = bboxes_to_sections(
             bboxes,
             self.SRT_shape,
-            self.SRT_zarr[str(subresolution_lvl-1)].shape
+            self.SRT_zarr[str(subresolution_lvl-1)]
         )
-        return self.sections
 
-    def _get_shape(self, section):
-        coords = self.sections[section]
-        x = coords['x'][1]-coords['x'][0]
-        y = coords['y'][1]-coords['y'][0]
+        tifffile.imwrite(
+            self.outupt_dir / 'marked_regions_SRT.tif',
+            marked_img
+        )
+
+        subresolution_lvl = len(self.IHC_zarr)
+        bboxes = find_rois(
+            self.IHC_shape,
+            self.IHC_zarr[str(subresolution_lvl-1)]
+        )
+        self.IHC_sections, marked_img = bboxes_to_sections(
+            bboxes,
+            self.IHC_shape,
+            self.IHC_zarr[str(subresolution_lvl-1)]
+        )
+
+        tifffile.imwrite(
+            self.outupt_dir / 'marked_regions_IHC.tif',
+            marked_img
+        )
+
+        return self.SRT_sections, self.IHC_sections
+
+    def _get_shape(self, section, IHC=True, SRT=False):
+        if IHC and not SRT:
+            coords = self.IHC_sections[section]
+            x = coords['x'][1]-coords['x'][0]
+            y = coords['y'][1]-coords['y'][0]
+        if SRT and not IHC:
+            coords = self.SRT_sections[section]
+            x = coords['x'][1]-coords['x'][0]
+            y = coords['y'][1]-coords['y'][0]
+
         return x, y
 
     def _filter_for_section(
@@ -140,6 +176,7 @@ class Phenium(object):
         model_params = self.CP_params['model']
         eval_params = self.CP_params['eval']
         style = self.CP_params['style']
+        channels = self.CP_params['channels']
 
         if style == 'focus':
             zrr = self.SRT_zarr
@@ -148,7 +185,7 @@ class Phenium(object):
         
         coords = self.sections[section]
         img = zrr['0'][
-            ...,
+            channels,
             coords['x'][0]:coords['x'][1],
             coords['y'][1]:coords['y'][1]
         ]
@@ -166,34 +203,36 @@ class Phenium(object):
             allow_pickle=True
         )
 
-    def prepare(self, section):
+    def prepare(self, SRT_section, IHC_section):
         '''
         Prepare `Phenium` and the input for the Segmentation and Deconvolution.
         '''
-        self._parse_config()
-        self._load_imgs()
-        self._find_sections()
-        self.homographyMatrix()
-
-        if section in self.sections:
-            self.section = section
+        if (
+            (SRT_section in self.SRT_sections.keys())
+            and
+            (IHC_section in self.IHC_sections.keys())
+        ):
+            self.SRT_section = SRT_section
+            self.IHC_section = IHC_section
         else:
             # this error isn't returned
-            KeyError(f'This section (`{section}`) does not exist.')
+            KeyError(f'This section (`{SRT_section}`) does not exist.')
             return None
 
-        self.roi_shape = self._get_shape(section)
+        # self.homographyMatrix()
+
+        self.roi_shape = self._get_shape(SRT_section)
     
         if self.priors == 'CP':
             self._run_cellpose(
-                section
+                SRT_section
             )
-            self.prior_path = self.output_dir / f'CP_masks_{section}.npy'
+            self.prior_path = self.output_dir / f'CP_masks_{SRT_section}.npy'
         elif self.priors == 'XOA':
             self._XOA_masks(
-                section
+                SRT_section
             )
-            self.prior_path = self.output_dir / f'XOA_masks_{section}.npy'
+            self.prior_path = self.output_dir / f'XOA_masks_{SRT_section}.npy'
         else:
             self.prior_path = ''
 
