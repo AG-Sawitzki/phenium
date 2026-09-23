@@ -19,6 +19,7 @@ environments:
     - https://pypi.org/simple
     packages:
       lida:
+      - conda: https://conda.anaconda.org/bioconda/linux-64/rust-proseg-3.2.0-hec9b1f2_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-8_kmp_llvm.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/alsa-lib-1.2.16.1-h7cc23a3_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/aom-3.9.1-hac33072_0.conda
@@ -502,6 +503,23 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/fc/0a/0858f60cb5a6f8f73ec4cdd73eccd9f748d66bfc23304c5c23fa3468094a/polars_runtime_32-1.44.1-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/fc/75/0576b03f7889ad25b5385b4f6c69e0543713425a6f193b056c9b0a2e65ce/formulaic-1.2.2-py3-none-any.whl
 packages:
+- conda: https://conda.anaconda.org/bioconda/linux-64/rust-proseg-3.2.0-hec9b1f2_0.conda
+  sha256: 796898b9712790168d13a976dd951d2ec64de54d2631dc703e6f649caae64534
+  md5: 598c3f2c25168c2d71668bec20dbc106
+  depends:
+  - __glibc >=2.17,<3.0.a0
+  - libgcc >=14
+  - libstdcxx >=14
+  constrains:
+  - __glibc >=2.17
+  license: GPL-3.0-or-later
+  license_family: GPL3
+  purls: []
+  run_exports:
+    weak:
+    - rust-proseg >=3.2.0,<4.0a0
+  size: 101716750
+  timestamp: 1785644730331
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-8_kmp_llvm.conda
   build_number: 8
   sha256: b8de006376660eb12c7fc40803c97e1480bf4bc1253f0d59694b12f81b52fe14

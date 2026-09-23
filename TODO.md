@@ -36,6 +36,7 @@
     - OPCV SIFT + FLANN + Homography
     - OPCV SIFT + BF + Homography
     - simpleITK M3<M1<M2~M4
+    - SITK with BSpline warps image. doesn't translate.
 
 # after proseg
 - [ ] run ovrlpy on proseg-separated transcripts

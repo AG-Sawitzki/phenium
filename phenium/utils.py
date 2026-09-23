@@ -16,6 +16,8 @@ from shapely import Polygon
 import cv2
 import ovrlpy
 import tifffile
+from dipy.align.transforms import TranslationTransform2D, RigidTransform2D
+from dipy.align.imaffine import AffineRegistration
 
 from typing import Any, Union, List, Tuple, overload
 from pathlib import PosixPath
@@ -64,18 +66,18 @@ def find_rois(
     """
     c, y, x = shape_org
 
-    subres_centre = np.uint8(img_subres)
-
+    subres = img_subres[0, ...]
+    subres_normed = subres/np.max(subres)
+    subres_U8I = np.uint8(subres_normed*255)
     subres_dilated = cv2.dilate(
-        subres_centre,
-        np.ones((2, 2)),
-        iterations=5
+        subres_U8I,
+        np.ones((3, 3)),
+        iterations=3
     )
     _, subres_binary = cv2.threshold(
         subres_dilated,
-        127, 255, 0
+        int(np.average(subres_dilated)), 255, 0
     )
-
     contours, _ = cv2.findContours(
         subres_binary,
         cv2.RETR_LIST,
@@ -86,7 +88,8 @@ def find_rois(
     scores = []
     for c in contours:
         (x, y), (w, h), a = cv2.minAreaRect(c)
-        bboxes.append([x,y,w,h])
+        dim = w if h < w else h
+        bboxes.append([x,y,dim,dim])
         scores.append(w*h)
 
     scores_normed = list(map(lambda x: x/max(scores), scores))
@@ -99,7 +102,7 @@ def find_rois(
     )
 
     bboxes_to_keep = np.array(bboxes)[ids_to_keep]
-    bboxes_sorted = sorted(bboxes_to_keep, key=lambda k: [k[1], k[0]])
+    bboxes_sorted = sorted(bboxes_to_keep, key=lambda k: [int(k[1]/100), k[0]])
 
     return bboxes_sorted
 
@@ -127,8 +130,8 @@ def bboxes_to_sections(
     if isinstance(subres, tuple):
         c_s, y_s, x_s = subres
     else:
-        marked_img = np.uint8(subres[0, ...])
-        c_s, y_s, x_s = marked_img.shape 
+        marked_img = np.uint8(subres[0, ...]).copy()
+        y_s, x_s = marked_img.shape
 
     rf_x = int(x/x_s)
     rf_y = int(y/y_s)
@@ -138,22 +141,23 @@ def bboxes_to_sections(
     for section, bbox in enumerate(bboxes):
         x, y, w, h = bbox
         sections[section] = {
-            'x': [int(x*rf_x), int(x+(w*rf_x))],
-            'y': [int(y*rf_y), int(y+(h*rf_y))]
+            'x': [int((x-w/2)*rf_x), int((x+w/2)*rf_x)],
+            'y': [int((y-h/2)*rf_y), int((y+h/2)*rf_y)]
         }
         if not isinstance(subres, tuple):
             cv2.rectangle(
-                marked_img, (x, y), (x+w, y+h),
-                (255,)*3, 2
+                marked_img, (int((x-w/2)), int(y-h/2)), (int(x+w/2), int(y+h/2)),
+                (255, 255, 255), 2
             )
             cv2.putText(
-                marked_img,
+                img=marked_img,
                 text=str(section),
-                org=(int(x+w/4), int(y+h/2)),
+                org=(int(x-(w/4)), int(y)),
                 fontFace=cv2.FONT_HERSHEY_PLAIN,
                 fontScale=2,
-                color=(255,)*3,
+                color=(255, 255, 255),
                 thickness=2,
+                lineType=cv2.LINE_AA,
                 bottomLeftOrigin=False,
             )
 
@@ -247,7 +251,6 @@ def filter_by_location(
             f'Not Implemented to deal with {type(table)}.'
         )
 
-
     return table
 
 
@@ -271,17 +274,30 @@ def boundaries_to_mask(table, shape):
     return masks, data
 
 
-def transcripts_for_ovrlpy(machine, file_path):
+def transcripts_for_ovrlpy(machine, transcripts):
     if machine == 'xenium':
-        transcripts = ovrlpy.io.read_Xenium(
-            filepath=file_path,
-            min_qv=None,
-            remove_features=ovrlpy.io.XENIUM_CTRLS,
-            n_threads=cpu_count(),
-        )
+        if isinstance(transcripts, os.pathlike):
+            transcripts = ovrlpy.io.read_Xenium(
+                filepath=transcripts,
+                min_qv=None,
+                remove_features=ovrlpy.io.XENIUM_CTRLS,
+                n_threads=cpu_count(),
+            )
+        elif isinstance(transcripts, pl.DataFrame):
+            transcripts = transcripts.rename(
+                ovrlpy.io._10X_GENOMICS_COLUMNS
+            )
+            transcripts = ovrlpy.io._filter_genes(
+                transcripts, ovrlpy.io.XENIUM_CTRLS
+            )
+        else:
+            raise TypeError(
+                'Only accepts paths and polars.DataFrame,'
+                f' not {type(transcripts)}.'
+            )
     else:
         raise NotImplementedError(
-            f"Not Implemented to deal with `{machine}`."
+            f'Not Implemented to deal with `{machine}`.'
         )
 
     return transcripts
@@ -293,35 +309,43 @@ def get_pixel_size(img_path) -> Tuple[float, float, float]:
     Returns None for nonexisting Physical Sizes.
     '''
     with tifffile.TiffFile(img_path) as tiff:
-        ImageDescription = tiff.pages[0].tags[270].value
+        tags = tiff.pages[0].tags
 
-    root = ET.fromstring(ImageDescription)
+    root = ET.fromstring(tags[270].value)
     pixels = root.find('.//*[@PhysicalSizeX]')
-    px_size_X = pixels.get('PhysicalSizeX')
-    px_size_Y = pixels.get('PhysicalSizeY')
-    px_size_Z = pixels.get('PhysicalSizeZ')
+    if isinstance(pixels, ET.Element):
+        px_size_X = pixels.get('PhysicalSizeX')
+        px_size_Y = pixels.get('PhysicalSizeY')
+        px_size_Z = pixels.get('PhysicalSizeZ', default=-1)
+    elif isinstance(pixels, type(None)):
+        px_size_X = tags[282].value[1]/tags[282].value[0]*1e4
+        px_size_Y = tags[283].value[1]/tags[283].value[0]*1e4
+        px_size_Z = -1
+    else:
+        raise ValueError('Cannot find the pixelsize.')
 
     return float(px_size_X), float(px_size_Y), float(px_size_Z)
 
 
-def get_affine_matrix(img1, img2):
-    sz = img1.shape
+def find_transform(static, moving, starting_affine=None):
+    if starting_affine is None:
+        starting_affine = np.identity(static.ndim+1)
+        starting_affine[:-1, -1] = np.random.random(static.ndim) - 0.5
 
-    # im1_gray = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
-    # im2_gray = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
+    affreg = AffineRegistration(
+        level_iters=[500, 300, 100],
+        sigmas=[3, 1, 0],
+        factors=[5, 3, 1],
+        method='cg',
+    )
+    transform = RigidTransform2D()
 
-    warp_mode = cv2.MOTION_TRANSLATION
-
-    warp_matrix = np.eye(2, 3, dtype=np.float32)
-
-    number_of_iterations = 5000
-
-    termination_eps = 1e-10
-
-    criteria = (
-        cv2.TERM_CRITERIA_EPS or cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps
+    rigid = affreg.optimize(
+        static=static,
+        moving=moving,
+        transform=transform,
+        params0=None,
+        starting_affine=starting_affine,
     )
 
-    im2_aligned = cv2.warpAffine(
-        img2, warp_matrix, (sz[1],sz[0]), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP
-    )
+    return rigid

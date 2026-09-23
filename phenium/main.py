@@ -4,6 +4,7 @@ from phenium.utils import (
     filter_by_location,
     boundaries_to_mask,
     transcripts_for_ovrlpy,
+    find_transform,
     get_pixel_size,
 )
 from phenium.exceptions import (
@@ -15,6 +16,7 @@ from phenium.segment import (
 )
 
 import multiprocessing as mp
+import os
 import json
 from pathlib import (
     PosixPath,
@@ -25,10 +27,12 @@ from typing import Union
 import fast_matrix_market as fmm
 import numpy as np
 import polars as pl
+from skimage.transform import rescale
 import tomlkit
 import tifffile
 import ovrlpy
 import zarr
+
 
 
 class Phenium(object):
@@ -95,16 +99,16 @@ class Phenium(object):
         subresolution_lvl = len(self.SRT_zarr)
         bboxes = find_rois(
             self.SRT_shape,
-            self.SRT_zarr[str(subresolution_lvl-1)]
+            self.SRT_zarr[str(subresolution_lvl-2)]
         )
         self.SRT_sections, marked_img = bboxes_to_sections(
             bboxes,
             self.SRT_shape,
-            self.SRT_zarr[str(subresolution_lvl-1)]
+            self.SRT_zarr[str(subresolution_lvl-2)]
         )
 
         tifffile.imwrite(
-            self.outupt_dir / 'marked_regions_SRT.tif',
+            self.output_dir / 'marked_regions_SRT.tif',
             marked_img
         )
 
@@ -120,7 +124,7 @@ class Phenium(object):
         )
 
         tifffile.imwrite(
-            self.outupt_dir / 'marked_regions_IHC.tif',
+            self.output_dir / 'marked_regions_IHC.tif',
             marked_img
         )
 
@@ -145,7 +149,7 @@ class Phenium(object):
         ) -> pl.dataframe.frame.DataFrame:
         # must be adapted for boundaries!
         # currently only transcripts are passed...
-        coords = self.sections[section]
+        coords = self.SRT_sections[section]
         filtered_table = filter_by_location(
             table,
             coords,
@@ -154,9 +158,32 @@ class Phenium(object):
 
         return filtered_table
 
-    def homographyMatrix(self):
-        ...
-        return self.hMatrix
+    def affine_matrix(self):
+        SRT_coords = self.SRT_sections[self.SRT_section]
+        IHC_coords = self.IHC_sections[self.IHC_section]
+
+        SRT_img = self.SRT_zarr['0'][
+            0,
+            SRT_coords['y'][0]:SRT_coords['y'][1],
+            SRT_coords['x'][0]:SRT_coords['x'][1]
+        ]
+        IHC_img = self.IHC_zarr['0'][
+            0,
+            IHC_coords['y'][0]:IHC_coords['y'][1],
+            IHC_coords['x'][0]:IHC_coords['x'][1]
+        ]
+        IHC_img = rescale(
+            IHC_img,
+            self.scaling_factor,
+            preserve_range=True,
+        )
+
+        SRT_img = np.uint16(SRT_img)
+        IHC_img = np.uint16(IHC_img)
+
+        matrix = find_transform(SRT_img, IHC_img)
+        
+        return matrix
 
     def _XOA_masks(self, section):
         path = self.input_dir / 'cell_boundaries.parquet'
@@ -219,8 +246,6 @@ class Phenium(object):
             KeyError(f'This section (`{SRT_section}`) does not exist.')
             return None
 
-        # self.homographyMatrix()
-
         self.roi_shape = self._get_shape(SRT_section)
     
         if self.priors == 'CP':
@@ -244,11 +269,11 @@ class Phenium(object):
         transcripts = pl.read_parquet(self.input_dir / 'transcripts.parquet')
         transcripts = self._filter_for_section(
             transcripts,
-            self.section
+            self.SRT_section
         )
 
         self.transcripts_path = (
-            self.output_dir / f'transcripts_{section}.parquet'
+            self.output_dir / f'transcripts_{self.SRT_section}.parquet'
         )
         transcripts.write_parquet(
             self.transcripts_path,
@@ -258,12 +283,15 @@ class Phenium(object):
                 version = '1.0',
             )
         )
+        
+        self.matrix = self.affine_matrix()
 
-    def get_VSI(self, transcripts_path, **kwargs):
+    def get_VSI(self, transcripts, **kwargs):
         cdf = transcripts_for_ovrlpy(
             machine=self.machine,
-            file_path=transcripts_path,
+            file_path=transcripts,
         )
+
         ovrlpy_dataset = ovrlpy.Ovrlp(
             cdf,
             # KDE_bandwidth,
