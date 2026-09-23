@@ -49,3 +49,6 @@
 - [ ] Nearest Neighbour
 - [ ] UMAP
 - [ ] leiden?
+
+# miscellaneous
+- [ ] pixel size must be calculated considering Physical Unit (296?)
