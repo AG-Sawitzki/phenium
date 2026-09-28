@@ -37,6 +37,7 @@
     - OPCV SIFT + BF + Homography
     - simpleITK M3<M1<M2~M4
     - SITK with BSpline warps image. doesn't translate.
+    - DIPY so far best performance
 
 # after proseg
 - [ ] run ovrlpy on proseg-separated transcripts

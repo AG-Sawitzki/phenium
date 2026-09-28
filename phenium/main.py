@@ -153,7 +153,7 @@ class Phenium(object):
         filtered_table = filter_by_location(
             table,
             coords,
-            pixelsize=self.pixelsizeXY_SRT
+            pixelsize=self.SRT_pxsize[0]
         )
 
         return filtered_table
@@ -177,16 +177,17 @@ class Phenium(object):
             self.scaling_factor,
             preserve_range=True,
         )
+        IHC_img = np.flip(IHC_img)
 
         SRT_img = np.uint16(SRT_img)
         IHC_img = np.uint16(IHC_img)
 
-        matrix = find_transform(SRT_img, IHC_img)
-        
+        reg, matrix = find_transform(SRT_img, IHC_img)
+
         return matrix
 
     def _XOA_masks(self, section):
-        path = self.input_dir / 'cell_boundaries.parquet'
+        path = self.SRT_dir / 'cell_boundaries.parquet'
         table = pl.read_parquet(path)
         table = self.filter_for_section(section, table)
         # shape = self.get_shape(section)
@@ -266,7 +267,7 @@ class Phenium(object):
             f'\n Prior_path: {self.prior_path}'
         )
 
-        transcripts = pl.read_parquet(self.input_dir / 'transcripts.parquet')
+        transcripts = pl.read_parquet(self.SRT_dir / 'transcripts.parquet')
         transcripts = self._filter_for_section(
             transcripts,
             self.SRT_section
@@ -329,7 +330,7 @@ class Phenium(object):
             self.PS_params,
             self.transcripts_path,
             self.output_dir,
-            self.pixelsizeXY_SRT,
+            self.SRT_pxsize[0],
             self.machine,
             self.prior_path
         )
@@ -345,7 +346,7 @@ class Phenium(object):
 
     # ... more functions
     def _load_counts(self):
-        counts_path = self.output_path / 'counts.mtx.gz'
+        counts_path = self.output_dir / 'counts.mtx.gz'
         self.counts = fmm.mmread(counts_path, parallelism=mp.cpu_count())
 
     # def run_leiden():

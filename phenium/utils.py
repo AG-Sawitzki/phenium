@@ -13,11 +13,11 @@ import numpy as np
 import polars as pl
 import geopandas as gpd
 from shapely import Polygon
+from ants import registration, apply_transforms
+from scipy.io import loadmat
 import cv2
 import ovrlpy
 import tifffile
-from dipy.align.transforms import TranslationTransform2D, RigidTransform2D
-from dipy.align.imaffine import AffineRegistration
 
 from typing import Any, Union, List, Tuple, overload
 from pathlib import PosixPath
@@ -199,22 +199,17 @@ def filter_by_location(
     if isinstance(table, pl.DataFrame):
         for axis, extremes in coords.items():
             var_min, var_max = extremes
+            print(var_min, '\n', var_max, '\n', extremes)
 
             if pixelsize:
-                var_min = var_min * pixelsize
-                var_max = var_max * pixelsize
+                var_min = float(var_min * pixelsize)
+                var_max = float(var_max * pixelsize)
             if f'{axis}_location' in table.columns:
                 column = f'{axis}_location'
             elif f'vertex_{axis}' in table.columns:
                 column = f'vertex_{axis}'
             else:
                 column = 'x'
-
-            # if pixelsize:
-            #     pixeled = table.select(
-            #         (pl.col(column) / pixelsize).round(0),
-            #     )
-            #     table = table.update(pixeled)
 
             expr = ((pl.col(column)).is_between(
                 var_min, var_max, closed='both'
@@ -225,10 +220,10 @@ def filter_by_location(
         y_min, y_max = coords['y']
 
         if pixelsize:
-            x_min = x_min * pixelsize
-            x_max = x_max * pixelsize
-            y_min = y_min * pixelsize
-            y_max = y_max * pixelsize
+            x_min = float(x_min * pixelsize)
+            x_max = float(x_max * pixelsize)
+            y_min = float(y_min * pixelsize)
+            y_max = float(y_max * pixelsize)
 
         polygon = Polygon([
             (x_min, y_min), (x_max, y_min),
@@ -328,24 +323,13 @@ def get_pixel_size(img_path) -> Tuple[float, float, float]:
 
 
 def find_transform(static, moving, starting_affine=None):
-    if starting_affine is None:
-        starting_affine = np.identity(static.ndim+1)
-        starting_affine[:-1, -1] = np.random.random(static.ndim) - 0.5
-
-    affreg = AffineRegistration(
-        level_iters=[500, 300, 100],
-        sigmas=[3, 1, 0],
-        factors=[5, 3, 1],
-        method='cg',
-    )
-    transform = RigidTransform2D()
-
-    rigid = affreg.optimize(
-        static=static,
+    reg = registration(
+        fixed=static,
         moving=moving,
-        transform=transform,
-        params0=None,
-        starting_affine=starting_affine,
+        type_of_transform='antsRegistrationSyNQuick[r]',
+        verbose=True,
     )
 
-    return rigid
+    matrix = loadmat(reg['fwdtransforms'][0])
+
+    return reg, matrix
