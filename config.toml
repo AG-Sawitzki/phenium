@@ -43,12 +43,12 @@ burnin-voxel-size = 0
 # advanced options
 # --------------------------------------
 # consult /proseg#output-arguments
-counts = false
+counts = true
 expected-counts = false
 rates = false
-cell-metadata = false
+cell-metadata = true
 transcript-metadata = false
-gene-metadata = false
+gene-metadata = true
 metagene-rates = false
 metagene-loadings = false
 voxel-counts = false
