@@ -8,13 +8,12 @@ from multiprocessing import cpu_count
 from multiprocessing.pool import Pool
 import xml.etree.ElementTree as ET
 
-import fast_matrix_market as fmm
 import numpy as np
 import polars as pl
 import geopandas as gpd
 from shapely import Polygon
-from ants import registration, apply_transforms
-from scipy.io import loadmat
+# from ants import registration, apply_transforms
+# from scipy.io import loadmat
 import cv2
 import ovrlpy
 import tifffile
@@ -32,7 +31,29 @@ def depth(
     return 0
 
 
-def to_cli(tup: tuple, prefix = '', suffix = ''):
+def to_cli(
+    tup: Tuple[str, bool | int | float | str],
+    prefix: str = '',
+    suffix: str = ''
+) -> str:
+    """
+    A argument-value pair is written as a Command-Line Interface argument.
+
+    Parameters
+    ----------
+        tup: tuple
+            A tuple of two entries. First the argument, second the value.
+        prefix: str
+            A string append before the argument.
+        suffix: str
+            A string append following the argument.
+
+    Retruns
+    -------
+        out: str
+            A CLI-argument
+            --[prefix][arg][suffix] [value]
+    """
     arg, value = tup
     if isinstance(value, bool):
         if value:
@@ -48,7 +69,7 @@ def to_cli(tup: tuple, prefix = '', suffix = ''):
 def find_rois(
     shape_org: tuple,
     img_subres: ArrayLike,
-) -> Union[list, ArrayLike]:
+):
     """
     Sort the contours by area.
 
@@ -61,7 +82,7 @@ def find_rois(
 
     Returns
     ----------
-        out : ArrayLike or list
+        out : list
             Contours of significant size.
     """
     c, y, x = shape_org
@@ -126,6 +147,9 @@ def bboxes_to_sections(
     shape_org,
     subres,
 ):
+    """
+
+    """
     c, y, x = shape_org
     if isinstance(subres, tuple):
         c_s, y_s, x_s = subres
@@ -250,6 +274,9 @@ def filter_by_location(
 
 
 def boundaries_to_mask(table, shape):
+    """
+
+    """
     data = dict()
     masks = np.zeros(shape)
 
@@ -299,10 +326,10 @@ def transcripts_for_ovrlpy(machine, transcripts):
 
 
 def get_pixel_size(img_path) -> Tuple[float, float, float]:
-    '''
+    """
     Get pixel size from xml metadata of (OME)Tiff.
     Returns None for nonexisting Physical Sizes.
-    '''
+    """
     with tifffile.TiffFile(img_path) as tiff:
         tags = tiff.pages[0].tags
 
@@ -322,14 +349,24 @@ def get_pixel_size(img_path) -> Tuple[float, float, float]:
     return float(px_size_X), float(px_size_Y), float(px_size_Z)
 
 
-def find_transform(static, moving, starting_affine=None):
-    reg = registration(
-        fixed=static,
-        moving=moving,
-        type_of_transform='antsRegistrationSyNQuick[r]',
-        verbose=True,
-    )
+# def find_transform(static, moving, initial_transform=None):
+#     reg = registration(
+#         fixed=static,
+#         moving=moving,
+#         type_of_transform='antsRegistrationSyNQuick[r]',
+#         initial_transform=initial_transform,
+#         verbose=True,
+#     )
 
-    matrix = loadmat(reg['fwdtransforms'][0])
+#     mat = loadmat(reg['fwdtransforms'][0])
+#     dim = static.ndim
+#     keys = list(mat.keys())
+#     A = mat[keys[0]][:dim**2].reshape((dim, dim))
+#     t = mat[keys[0]][dim**2:]
+#     c = mat[keys[1]]
+#     w = t + c - np.dot(A, c)
+#     Ah = np.identity(dim+1)
+#     Ah[:dim, :dim] = A
+#     Ah[:dim, dim:] = w
 
-    return reg, matrix
+#     return reg, Ah

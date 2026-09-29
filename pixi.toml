@@ -1,47 +1,55 @@
 [workspace]
 authors = ["minna"]
-channels = ["conda-forge", "rapidsai", "bioconda", "pytorch", "nodefaults"]
+channels = [
+    "rapidsai", "nvidia", "conda-forge", "bioconda", "pytorch", "nodefaults", 
+]
 name = "phenium"
 platforms = [
-    { name = "lida", platform = "linux-64", cuda = "12.0" },
+    { name = "lida", platform = "linux-64", cuda = "12" },
 ]
 version = "0.1.0"
 
 [constraints]
-pandas = ">2.0,<3.0"
+numpy = ">=1.20.0"
+pandas = ">2.0,<3.0" 
+
+[dependencies]
+python = ">=3.13"
 
 [target.lida.dependencies]
-python = "*"
+antspyx = ">0.6"
+celltypist = ">1.7.0"
+cuda-version = "==12.9"
+cudnn = "*"
+cutensor = "*"
+cusparselt = "*"
+# fast_matrix_market = "==1.7.6"
+fastremap = "*"
+fill-voids = "*"
+geojson = "*"
+geopandas = "*"
+imagecodecs = "*"
+psutil = "*"
+pyqtgraph = "*"
+pyqt6 = "*"
 pytorch-gpu = "*"
-cuda-version = "12.6.*"
-py-opencv = ">=4.12.0,<5"
-pyqtgraph = ">=0.14.0,<0.15"
-pyqt6 = ">=6.8.1,<7"
-imagecodecs = ">=2026.1.14,<2027"
-roifile = ">=2026.7.30,<2027"
-fastremap = ">=1.20.0,<2"
-fill-voids = ">=2.1.2,<3"
-cellpose = ">=4.1.1,<5"
-rust = ">=1.98.1,<1.99"
-rust-proseg = ">=3.2.0,<4"
-geojson = ">=3.3.0,<4"
-shapely = ">=2.1.2,<3"
-geopandas = ">=1.1.4,<2"
-tomlkit = ">=0.15.1,<0.16"
-psutil = ">=7.2.2,<8"
-tqdm = ">=4.70.0,<5"
-zarr = "==3.1.5"
-fast_matrix_market = ">=1.7.6, <2"
-simpleitk = "*"
-dipy = "*"
-celltypist = "*"
-# cuml = "*"
-antspyx = "*"
+rapids = { version = "26.*", channel = "rapidsai" }
+roifile = "*"
+rust = "==1.88.0"
+shapely = "*"
+spatialdata = ">=0.7.2"
+tifffile = ">=2026,<2027"
+tomlkit = "*"
+torchvision = "*"
+tqdm = "*"
+zarr = ">3"
 
 [target.lida.pypi-dependencies]
+cellpose = "==4.2.1.1"
 DINOv3 = { git = "https://github.com/facebookresearch/dinov3", rev = "6876159a11b4df116f30f667f8c9888617df0751" }
-ovrlpy = ">=1.2.0, <2"
 microfilm = "<=0.3.0"
-rapids-singlecell-cu12 = ">=0.17.0, <0.18"
-spatialdata = { version = ">=0.8.0, <0.9", extras = ["torch"] }
-pyarrow = ">=25.0.1, <26"
+opencv-python-headless = ">=4.13.0"
+ovrlpy = "*"
+pyarrow = "*"
+rapids-singlecell-cu12 = { version = "*" }
+spatialdata = { version = "*", extras = ["torch"] }

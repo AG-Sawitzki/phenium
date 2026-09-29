@@ -34,16 +34,16 @@ voxel-layers = 0
 samples = 200
 burnin-samples = 200
 # set by the pipeline. best left empty.
-voxel-size = ''
+voxel-size = 0
 # set by the pipeline. best left empty.
-burnin-voxel-size = ''
+burnin-voxel-size = 0
 
 [proseg.output]
 # --------------------------------------
 # advanced options
 # --------------------------------------
 # consult /proseg#output-arguments
-counts = true
+counts = false
 expected-counts = false
 rates = false
 cell-metadata = false
@@ -87,7 +87,7 @@ density-bins = 5
 ignore-z-coord = false
 variable-burnin-dispersion = false
 check-consistency = false
-exclude-spatialdata-transcripts = false
+exclude-spatialdata-transcripts = true
 monitor-cell-polygons = false
 enforce-connectivity = false
 no-factorization = false

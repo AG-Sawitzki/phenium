@@ -21,7 +21,7 @@
         - avg integrity before & after (?)
 
 # Imag Registration
-- [ ] stars this is taking ages...
+- [X] stars this is taking ages...
 - tried:
     - OPCV ECC + Homography
     - OPCV SIFT + FLANN + Homography
@@ -38,6 +38,7 @@
     - simpleITK M3<M1<M2~M4
     - SITK with BSpline warps image. doesn't translate.
     - DIPY so far best performance
+- found ANTsPy !
 
 # after proseg
 - [ ] run ovrlpy on proseg-separated transcripts
@@ -50,6 +51,7 @@
 - [ ] Nearest Neighbour
 - [ ] UMAP
 - [ ] leiden?
+- [ ] celltypist
 
 # miscellaneous
 - [ ] pixel size must be calculated considering Physical Unit (296?)

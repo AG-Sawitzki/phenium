@@ -94,6 +94,7 @@ def proseg_wrapper(
     arguments.insert(0, 'proseg')
 
     cmd = ' '.join(arguments)
+    print(cmd)
     p = Popen(cmd, shell=True)
     p.wait()
 

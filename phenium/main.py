@@ -4,7 +4,7 @@ from phenium.utils import (
     filter_by_location,
     boundaries_to_mask,
     transcripts_for_ovrlpy,
-    find_transform,
+    # find_transform,
     get_pixel_size,
 )
 from phenium.exceptions import (
@@ -22,14 +22,16 @@ from pathlib import (
     PosixPath,
     Path
 )
-from typing import Union
+from typing import Union, Tuple
 
-import fast_matrix_market as fmm
+# import fast_matrix_market as fmm
 import numpy as np
 import polars as pl
+from scipy.io import loadmat, mmread
 from skimage.transform import rescale
-import tomlkit
+import ants
 import tifffile
+import tomlkit
 import ovrlpy
 import zarr
 
@@ -37,12 +39,12 @@ import zarr
 
 class Phenium(object):
     def __init__(
-            self,
-            SRT_dir,
-            IHC_path,
-            output_dir,
-            config_path,
-        )-> None:
+        self,
+        SRT_dir,
+        IHC_path,
+        output_dir,
+        config_path,
+    )-> None:
         self.SRT_dir = Path(SRT_dir)
         self.IHC_path = Path(IHC_path)
         self.output_dir = Path(output_dir)
@@ -54,7 +56,9 @@ class Phenium(object):
 
         print('Initialized. Review marked images and provide sections.')
 
-    def _parse_config(self):
+    def _parse_config(
+        self,
+    ) -> None:
         with open(self.config_path) as f:
             config = tomlkit.load(f)
 
@@ -64,7 +68,9 @@ class Phenium(object):
         self.CP_params = config['cellpose']
         self.PS_params = config['proseg']
 
-    def load_imgs(self):
+    def load_imgs(
+        self,
+    ) -> None:
         '''
         Load the SRT and IHC images as zarr-storages, retrieves the pixelsize,
         and add the shape to the object variables.
@@ -95,7 +101,9 @@ class Phenium(object):
 
         self.scaling_factor = self.IHC_pxsize[0]/self.SRT_pxsize[0]
 
-    def find_sections(self):
+    def find_sections(
+        self
+    ) -> None:
         subresolution_lvl = len(self.SRT_zarr)
         bboxes = find_rois(
             self.SRT_shape,
@@ -128,49 +136,39 @@ class Phenium(object):
             marked_img
         )
 
-        return self.SRT_sections, self.IHC_sections
-
-    def _get_shape(self, section, IHC=True, SRT=False):
-        if IHC and not SRT:
-            coords = self.IHC_sections[section]
-            x = coords['x'][1]-coords['x'][0]
-            y = coords['y'][1]-coords['y'][0]
-        if SRT and not IHC:
-            coords = self.SRT_sections[section]
-            x = coords['x'][1]-coords['x'][0]
-            y = coords['y'][1]-coords['y'][0]
+    def _get_shape(
+        self,
+    ) -> Tuple[int, int]:
+        x = self.SRT_coords['x'][1]-self.SRT_coords['x'][0]
+        y = self.SRT_coords['y'][1]-self.SRT_coords['y'][0]
 
         return x, y
 
     def _filter_for_section(
-            self,
-            table,
-            section,
-        ) -> pl.dataframe.frame.DataFrame:
+        self,
+        table,
+        section,
+    ) -> pl.dataframe.frame.DataFrame:
         # must be adapted for boundaries!
         # currently only transcripts are passed...
-        coords = self.SRT_sections[section]
         filtered_table = filter_by_location(
             table,
-            coords,
+            self.SRT_coords,
             pixelsize=self.SRT_pxsize[0]
         )
 
         return filtered_table
 
-    def affine_matrix(self):
-        SRT_coords = self.SRT_sections[self.SRT_section]
-        IHC_coords = self.IHC_sections[self.IHC_section]
-
-        SRT_img = self.SRT_zarr['0'][
-            0,
-            SRT_coords['y'][0]:SRT_coords['y'][1],
-            SRT_coords['x'][0]:SRT_coords['x'][1]
-        ]
+    def find_affine(
+        self,
+        quick=False,
+        verbose=False
+    ) -> None:
+        SRT_img = self.SRT_img[0, :, :]
         IHC_img = self.IHC_zarr['0'][
             0,
-            IHC_coords['y'][0]:IHC_coords['y'][1],
-            IHC_coords['x'][0]:IHC_coords['x'][1]
+            self.IHC_coords['y'][0]:self.IHC_coords['y'][1],
+            self.IHC_coords['x'][0]:self.IHC_coords['x'][1]
         ]
         IHC_img = rescale(
             IHC_img,
@@ -179,12 +177,54 @@ class Phenium(object):
         )
         IHC_img = np.flip(IHC_img)
 
-        SRT_img = np.uint16(SRT_img)
-        IHC_img = np.uint16(IHC_img)
+        SRT_img = np.uint32(SRT_img)
+        IHC_img = np.uint32(IHC_img)
 
-        reg, matrix = find_transform(SRT_img, IHC_img)
+        static = ants.from_numpy(SRT_img)
+        moving = ants.from_numpy(IHC_img)
 
-        return matrix
+        if quick:
+            tof = 'antsRegistrationSyNQuick[r]'
+        else:
+            tof = 'antsRegistrationSyN[r]'
+
+        reg = ants.registration(
+            fixed=static,
+            moving=moving,
+            type_of_transform=tof,
+            verbose=verbose,
+        )
+
+        mat = loadmat(reg['fwdtransforms'][0])
+        keys = list(mat.keys())
+
+        dim = SRT_img.ndim
+        A = mat[keys[0]][:dim**2].reshape((dim, dim))
+        t = mat[keys[0]][dim**2:]
+        c = mat[keys[1]]
+
+        w = t + c - np.dot(A, c)
+        Ah = np.identity(dim+1)
+        Ah[:dim, :dim] = A
+        Ah[:dim, dim:] = w
+
+        self.affine_transform = Ah
+        self.reg_fwd = reg['fwdtransforms']
+
+    def _transform_IHC_channel(self, channel):
+        img = self.IHC_zarr['0'][
+            channel,
+            self.IHC_coords['y'][0]:self.IHC_coords['y'][1],
+            self.IHC_coords['x'][0]:self.IHC_coords['x'][1]
+        ]
+        transformed_img = ants.apply_transforms(
+            fixed=self.SRT_img[0],
+            moving=img,
+            transformlist=self.reg_fwd,
+            interpolator='nearestNeighbor',
+        )
+
+        return transformed_img
 
     def _XOA_masks(self, section):
         path = self.SRT_dir / 'cell_boundaries.parquet'
@@ -200,7 +240,7 @@ class Phenium(object):
         with open(self.output_dir / f'XOA_polygons_{section}.json') as f:
             json.dump(f, polygons)
 
-    def _run_cellpose(self, section):
+    def _run_cellpose(self):
         model_params = self.CP_params['model']
         eval_params = self.CP_params['eval']
         style = self.CP_params['style']
@@ -208,15 +248,17 @@ class Phenium(object):
 
         if style == 'focus':
             zrr = self.SRT_zarr
+            img = zrr['0'][
+                channels,
+                self.SRT_coords['y'][0]:self.SRT_coords['y'][1],
+                self.SRT_coords['x'][0]:self.SRT_coords['x'][1]
+            ]
         if style == 'pheno':
-            zrr = self.IHC_zarr
-        
-        coords = self.sections[section]
-        img = zrr['0'][
-            channels,
-            coords['x'][0]:coords['x'][1],
-            coords['y'][1]:coords['y'][1]
-        ]
+            imgs = []
+            for c in channels:
+                imgs.append(self._transform_IHC_channel(c))
+            img = np.dstack(imgs)
+            img = np.moveaxis(img, -1, 0)
 
         masks, flows, styles = cellpose_wrapper(
             img,
@@ -226,12 +268,12 @@ class Phenium(object):
         )
 
         np.save(
-            self.output_dir / f'CP_masks_{section}.npy',
+            self.output_dir / f'CP_masks_{self.SRT_section}.npy',
             masks,
             allow_pickle=True
         )
 
-    def prepare(self, SRT_section, IHC_section):
+    def prepare(self, SRT_section, IHC_section, quick=True, verbose=True):
         '''
         Prepare `Phenium` and the input for the Segmentation and Deconvolution.
         '''
@@ -247,8 +289,19 @@ class Phenium(object):
             KeyError(f'This section (`{SRT_section}`) does not exist.')
             return None
 
-        self.roi_shape = self._get_shape(SRT_section)
-    
+        self.IHC_coords = self.IHC_sections[self.IHC_section]
+        self.SRT_coords = self.SRT_sections[self.SRT_section]
+
+        self.SRT_img = self.SRT_zarr['0'][
+            :,
+            self.SRT_coords['y'][0]:self.SRT_coords['y'][1],
+            self.SRT_coords['x'][0]:self.SRT_coords['x'][1]
+        ]
+
+        self.find_affine(quick=quick, verbose=verbose)
+
+        self.roi_shape = self._get_shape()
+
         if self.priors == 'CP':
             self._run_cellpose(
                 SRT_section
@@ -284,8 +337,6 @@ class Phenium(object):
                 version = '1.0',
             )
         )
-        
-        self.matrix = self.affine_matrix()
 
     def get_VSI(self, transcripts, **kwargs):
         cdf = transcripts_for_ovrlpy(
@@ -347,7 +398,7 @@ class Phenium(object):
     # ... more functions
     def _load_counts(self):
         counts_path = self.output_dir / 'counts.mtx.gz'
-        self.counts = fmm.mmread(counts_path, parallelism=mp.cpu_count())
+        self.counts = mmread(counts_path, parallelism=mp.cpu_count())
 
     # def run_leiden():
 
