@@ -223,7 +223,7 @@ def filter_by_location(
     if isinstance(table, pl.DataFrame):
         for axis, extremes in coords.items():
             var_min, var_max = extremes
-            print(var_min, '\n', var_max, '\n', extremes)
+            # print(var_min, '\n', var_max, '\n', extremes)
 
             if pixelsize:
                 var_min = float(var_min * pixelsize)
@@ -298,7 +298,7 @@ def boundaries_to_mask(table, shape):
 
 def transcripts_for_ovrlpy(machine, transcripts):
     if machine == 'xenium':
-        if isinstance(transcripts, os.pathlike):
+        if isinstance(transcripts, (os.PathLike, str)):
             transcripts = ovrlpy.io.read_Xenium(
                 filepath=transcripts,
                 min_qv=None,
@@ -347,26 +347,3 @@ def get_pixel_size(img_path) -> Tuple[float, float, float]:
         raise ValueError('Cannot find the pixelsize.')
 
     return float(px_size_X), float(px_size_Y), float(px_size_Z)
-
-
-# def find_transform(static, moving, initial_transform=None):
-#     reg = registration(
-#         fixed=static,
-#         moving=moving,
-#         type_of_transform='antsRegistrationSyNQuick[r]',
-#         initial_transform=initial_transform,
-#         verbose=True,
-#     )
-
-#     mat = loadmat(reg['fwdtransforms'][0])
-#     dim = static.ndim
-#     keys = list(mat.keys())
-#     A = mat[keys[0]][:dim**2].reshape((dim, dim))
-#     t = mat[keys[0]][dim**2:]
-#     c = mat[keys[1]]
-#     w = t + c - np.dot(A, c)
-#     Ah = np.identity(dim+1)
-#     Ah[:dim, :dim] = A
-#     Ah[:dim, dim:] = w
-
-#     return reg, Ah

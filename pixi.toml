@@ -14,7 +14,7 @@ numpy = ">=1.20.0"
 pandas = ">2.0,<3.0" 
 
 [dependencies]
-python = ">=3.13"
+python = ">=3.12"
 
 [target.lida.dependencies]
 antspyx = ">0.6"

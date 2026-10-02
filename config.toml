@@ -13,7 +13,10 @@ machine = 'xenium'
 # or 'XOA' for Xenium Onboard Analysis
 # or 'None' for priorless proseg-segmenation
 priors = 'None'
-
+#
+# what cell diameter is to be expected
+# given in micrometers
+size = 7
 
 [proseg]
 # run `proseg --help` in the terminal after installing
@@ -86,10 +89,10 @@ density-bins = 5
 # -------------------
 ignore-z-coord = false
 variable-burnin-dispersion = false
-check-consistency = false
+check-consistency = true
 exclude-spatialdata-transcripts = true
 monitor-cell-polygons = false
-enforce-connectivity = false
+enforce-connectivity = true
 no-factorization = false
 include-neg-ctrls = false
 use-scaled-cells = false

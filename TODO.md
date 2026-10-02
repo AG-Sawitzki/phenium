@@ -14,11 +14,16 @@
         - tissue signal integrity
         - doublets
         - VSI & doublets of ROI
+- [ ] run ovrlpy on cell_ids in proseg's "cells"
+- [ ] run ovrlpy on layers and cell_ids from proseg
 - [ ] visualize quantity?
     - average of region?
     - compare signal reduction and integrity-change
         - abs signal difference
         - avg integrity before & after (?)
+- [ ] intersection with geopandas
+    - for each cell(layer) find coverage with all others cells
+        - obv excluding itself
 
 # Imag Registration
 - [X] stars this is taking ages...
@@ -45,12 +50,34 @@
     - [ ] segment with proseg
     - [ ] separate transcripts of each layer
         - a layer should be define by the thicknes of the sample
+    - ...
+        - [ ] transcripts_locations as points in gdf
+            - shapely.geometry.Point works on pl.DataFrame **row**
+        - [ ] check if point in polygon
+            - for each layer
+        - [ ] apply check-array on transcripts
+        - [ ] asign to new layer df
+## cell and layer assignment
+- [ ] find layer cell is biggest in?
+- [ ] find cells containing transcript (location!)
+    - over all layers
+    -> frame of trans: cell1, cell1, cell2, cell1
+- [ ] asign transcript to dominant cell
+- [ ] asign transcript to new DF according to dominant cell-layer?
+
+## protein assigning
+- pixel by pixel
+    - signal above certain threshold
+- identify cells covering that point
+- find probabilities of belonging to cell1, cell2, ...
+- assign fraction of signal to each cell above threshold
+- distribute signal over cell layers by cell size
 
 # SC Analysis
-- [ ] PCA
+- [ ] QC metric (a nice to have)
 - [ ] Nearest Neighbour
-- [ ] UMAP
 - [ ] leiden?
+- [ ] UMAP
 - [ ] celltypist
 
 # miscellaneous

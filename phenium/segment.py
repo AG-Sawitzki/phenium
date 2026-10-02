@@ -26,10 +26,11 @@ def cellpose_wrapper(img, model_params, eval_params):
 
 def proseg_wrapper(
     proseg_params,
+    machine,
     transcripts_path,
     output_dir,
-    pixelsize,
-    machine,
+    # pixelsize,
+    layers,
     prior_path = '',
 ):
     for category, dic in proseg_params.items():
@@ -41,13 +42,13 @@ def proseg_wrapper(
                         value = mp.cpu_count()
                 elif arg == 'voxel-layers':
                     if not value:
-                        value = 4
+                        value = layers
                 elif arg == 'voxel-size':
                     if not value:
-                        value = pixelsize
+                        value = 1
                 elif arg == 'burnin-voxel-size':
                     if not value:
-                        value = pixelsize*8
+                        value = 1*8
                 else:
                     value = value
                 general.append(
@@ -85,7 +86,7 @@ def proseg_wrapper(
             raise KeyError(f'Unknown Category: `{category}`.')
 
     arguments = general + output + model + diffusion
-    if prior_path:
+    if prior_path != '':
         arguments += ['--cellpose-masks', str(prior_path)]
 
     arguments.append(f'--{machine}')

@@ -2,10 +2,11 @@
 Deconvolution of Immunohistochemistry
 
 > [!IMPORTANT]
-> A Linux-64 system is currently recommended!
+> A Linux-64 system is currently strictly necessary!
+> A cuda 12.9 compatible GPU is required!
 
 ### Proseg
-Install Proseg by running the command below in the XenSegEval directory.
+Install Proseg by running the command below in the phenium directory.
 ```
-pixi run -e proseg cargo install --version 3.2.0 proseg
+pixi run cargo install --version 3.2.0 proseg
 ```
