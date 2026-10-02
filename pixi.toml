@@ -1,5 +1,5 @@
 [workspace]
-authors = ["minna"]
+authors = ["Philomina"]
 channels = [
     "rapidsai", "nvidia", "conda-forge", "bioconda", "pytorch", "nodefaults", 
 ]
@@ -7,7 +7,12 @@ name = "phenium"
 platforms = [
     { name = "lida", platform = "linux-64", cuda = "12" },
 ]
-version = "0.1.0"
+version = "2026.10.2a1"
+
+[package.build]
+backend = { name = "pixi-build-python", version = "0.*" }
+
+[package.
 
 [constraints]
 numpy = ">=1.20.0"
@@ -15,8 +20,9 @@ pandas = ">2.0,<3.0"
 
 [dependencies]
 python = ">=3.12"
+phenium = { path = "." }
 
-[target.lida.dependencies]
+[target.lida.run-dependencies]
 antspyx = ">0.6"
 celltypist = ">1.7.0"
 cuda-version = "==12.9"
@@ -44,7 +50,7 @@ torchvision = "*"
 tqdm = "*"
 zarr = ">3"
 
-[target.lida.pypi-dependencies]
+[target.lida.run-pypi-dependencies]
 cellpose = "==4.2.1.1"
 DINOv3 = { git = "https://github.com/facebookresearch/dinov3", rev = "6876159a11b4df116f30f667f8c9888617df0751" }
 microfilm = "<=0.3.0"

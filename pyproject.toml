@@ -1,0 +1,36 @@
+# 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "phenium"
+version = "2026.10.2a1"
+requires-python = ">= 3.12"
+authors = [
+	{ name = "Philomina Normann", email = "philomina-lillie.normann@bih-charite.de" },
+]
+description = "Deconvolution of 2D Immunohistochemestry with ProSeg and Ovrlpy"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICEN[CS]E"]
+keywords = ["spatial transcriptomics", "immunohistochemestry", "deconvolution"]
+
+classifiers = [
+  # How mature is this project? Common values are
+  #   3 - Alpha
+  #   4 - Beta
+  #   5 - Production/Stable
+  "Development Status :: 2 - PreAlpha",
+
+  # Indicate who your project is intended for
+  "Intended Audience :: Developers",
+  "Topic :: Software Development :: Build Tools",
+
+  # Specify the Python versions you support here.
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
+Repository = "https://github.com/AG-Sawitzki/phenium.git"
