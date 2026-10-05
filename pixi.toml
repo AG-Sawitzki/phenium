@@ -9,10 +9,8 @@ platforms = [
 ]
 version = "2026.10.2a1"
 
-[package.build]
-backend = { name = "pixi-build-python", version = "0.*" }
-
-[package.
+# [package.build]
+# backend = { name = "pixi-build-python", version = "0.*" }
 
 [constraints]
 numpy = ">=1.20.0"
@@ -20,9 +18,9 @@ pandas = ">2.0,<3.0"
 
 [dependencies]
 python = ">=3.12"
-phenium = { path = "." }
+# phenium = { path = "./phenium/" }
 
-[target.lida.run-dependencies]
+[target.lida.dependencies]
 antspyx = ">0.6"
 celltypist = ">1.7.0"
 cuda-version = "==12.9"
@@ -50,7 +48,7 @@ torchvision = "*"
 tqdm = "*"
 zarr = ">3"
 
-[target.lida.run-pypi-dependencies]
+[target.lida.pypi-dependencies]
 cellpose = "==4.2.1.1"
 DINOv3 = { git = "https://github.com/facebookresearch/dinov3", rev = "6876159a11b4df116f30f667f8c9888617df0751" }
 microfilm = "<=0.3.0"

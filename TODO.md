@@ -9,7 +9,7 @@
 
 # quantify overlap
 - [ ] run ovrlpy on raw
-    - [X] what is the output?
+    - [x] what is the output?
         - UMAP & pseudocells
         - tissue signal integrity
         - doublets
@@ -26,7 +26,7 @@
         - obv excluding itself
 
 # Imag Registration
-- [X] stars this is taking ages...
+- [x] stars this is taking ages...
 - tried:
     - OPCV ECC + Homography
     - OPCV SIFT + FLANN + Homography
@@ -43,9 +43,9 @@
     - simpleITK M3<M1<M2~M4
     - SITK with BSpline warps image. doesn't translate.
     - DIPY so far best performance
-- found ANTsPy !
+- [x] found ANTsPy !
 
-# after proseg
+## after proseg
 - [ ] run ovrlpy on proseg-separated transcripts
     - [ ] segment with proseg
     - [ ] separate transcripts of each layer
@@ -82,3 +82,8 @@
 
 # miscellaneous
 - [ ] pixel size must be calculated considering Physical Unit (296?)
+- [ ] z-slides based on transcript-distribution (phenium) and cell size (user) + tissue thickness (user)
+
+# Präsi for Mo. 12.10.2027
+- [ ] find other Deconvolution methods
+- [ ] investigate QQ, Earth mover's distance & Minimum Spanning Tree

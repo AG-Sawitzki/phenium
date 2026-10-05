@@ -14,9 +14,16 @@ machine = 'xenium'
 # or 'None' for priorless proseg-segmenation
 priors = 'None'
 #
-# what cell diameter is to be expected
-# given in micrometers
-size = 7
+# average cell-thickness (z)
+# in micrometer
+size = 4
+#
+# thickness of the sample
+# in micrometer
+thickness = 4
+#
+# celltypist model
+CT_model = 'Immune_All_High.pkl'
 
 [proseg]
 # run `proseg --help` in the terminal after installing

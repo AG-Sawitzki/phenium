@@ -11,9 +11,13 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import polars as pl
 import geopandas as gpd
+import scanpy as sc
+import rapids_singlecell as rsc
 from shapely import Polygon
 # from ants import registration, apply_transforms
 # from scipy.io import loadmat
+import cupyx
+import scipy
 import cv2
 import ovrlpy
 import tifffile
@@ -347,3 +351,33 @@ def get_pixel_size(img_path) -> Tuple[float, float, float]:
         raise ValueError('Cannot find the pixelsize.')
 
     return float(px_size_X), float(px_size_Y), float(px_size_Z)
+
+
+def run_leiden(
+    adata,
+    gpu=True,
+):
+    sc.pp.log1p(adata)
+    sc.pp.calculate_qc_metrics(
+        adata,
+        percent_top=(25, 75, 150),
+        inplace=True,
+        log1p=True
+    )
+    # sc.pp.filter_cells(adata, min_genes=1)
+    # sc.pp.filter_genes(adata, min_cells=1)
+
+    if gpu:
+        adata.X = cupyx.scipy.sparse.csr_matrix(adata.X)
+        rsc.get.anndata_to_GPU(adata, convert_all=True)
+        rsc.pp.neighbors(adata, use_rep='X')
+        rsc.tl.umap(adata)
+        rsc.tl.leiden(adata)
+        rsc.get.anndata_to_CPU(adata, convert_all=True)
+        adata.X = scipy.sparse.csr_matrix(adata.X)
+    else:
+        sc.pp.neighbors(adata)
+        sc.tl.umap(adata)
+        sc.tl.leiden(adata)
+
+    return adata

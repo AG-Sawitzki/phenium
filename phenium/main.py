@@ -6,6 +6,7 @@ from phenium.utils import (
     transcripts_for_ovrlpy,
     # find_transform,
     get_pixel_size,
+    run_leiden,
 )
 from phenium.exceptions import (
     NotImplemented
@@ -32,12 +33,13 @@ import polars as pl
 import rapids_singlecell as rsc
 import scanpy as sc
 from scipy.io import loadmat, mmread
-from cupyx.scipy.sparse import csr_matrix
 from skimage.transform import rescale
+from celltypist import models
 import ants
+import ovrlpy
+import celltypist
 import tifffile
 import tomlkit
-import ovrlpy
 import zarr
 
 
@@ -80,20 +82,27 @@ class Phenium(object):
 
     @property
     def layers(self):
-        height = self.config['Basics']['height']
-        if height:
-            bottom = min(self.transcripts['z_location'])
-            top = max(self.transcripts['z_location'])
-            thickness = top-bottom
-            cells_over_z = thickness / height
-            return int(cells_over_z*2)
-        else:    
-            store = tifffile.imread(
-                self.SRT_dir / 'morphology.ome.tif',
-                aszarr=True
-            )
-            zrr = zarr.open(store, mode='r')
-            return zrr['0'].shape[0]
+        cell_size = self.config['Basics']['size']
+        return cell_size*2
+
+        # if height:
+        #     bottom = min(self.transcripts['z_location'])
+        #     top = max(self.transcripts['z_location'])
+        #     thickness = top-bottom
+        #     cells_over_z = thickness / height
+        #     return int(cells_over_z*2)
+        # else:    
+        #     store = tifffile.imread(
+        #         self.SRT_dir / 'morphology.ome.tif',
+        #         aszarr=True
+        #     )
+        #     zrr = zarr.open(store, mode='r')
+        #     return zrr['0'].shape[0]
+
+    @property
+    def celltypist_model(self):
+        model = self.config['Basics']['CT_model']
+        return  model
 
     @property
     def CP_params(self):
@@ -389,7 +398,14 @@ class Phenium(object):
             allow_pickle=True
         )
 
-    def prepare(self, SRT_section, IHC_section, quick=True, verbose=True):
+    def prepare(
+        self,
+        SRT_section,
+        IHC_section,
+        skip_affine=False,
+        quick=True,
+        verbose=True
+    ):
         '''
         Prepare `Phenium` and the input for the Segmentation and Deconvolution.
         '''
@@ -414,7 +430,8 @@ class Phenium(object):
             )
         )
 
-        self.find_affine(quick=quick, verbose=verbose)
+        if not skip_affine:
+            self.find_affine(quick=quick, verbose=verbose)
 
         if self.priors_type == 'CP':
             self._run_cellpose(
@@ -434,7 +451,7 @@ class Phenium(object):
             f'\n Prior_path: {self.prior_path}'
         )
 
-    def get_VSI(self, transcripts, **kwargs):
+    def calculate_VSI(self, transcripts, **kwargs):
         cdf = transcripts_for_ovrlpy(
             machine=self.machine,
             transcripts=transcripts,
@@ -495,18 +512,18 @@ class Phenium(object):
 
     def _load_counts(self):
         counts_path = self.output_dir / 'counts.mtx.gz'
-        counts = mmread(counts_path, parallelism=mp.cpu_count())
+        counts = mmread(counts_path)
         self.counts = counts.tocsr()
     
     def _anndata(self):
         self._load_counts()
         genes = pl.read_parquet(self.output_dir / 'gene-metadata.parquet')
         cells = pl.read_parquet(self.output_dir / 'cell-metadata.parquet')
-        polygons = gpd.read_file(
-            (
-                self.output_dir / 'cell-polygon-layers.geojson.gz'
-            ).as_uri().replace('file', 'gzip')
-        )
+        # polygons = gpd.read_file(
+        #     (
+        #         self.output_dir / 'cell-polygon-layers.geojson.gz'
+        #     ).as_uri().replace('file', 'gzip')
+        # )
 
         obs = cells[['original_cell_id', 'cell']]
         obs_names = cells['original_cell_id']
@@ -518,7 +535,7 @@ class Phenium(object):
 
         var = genes[['gene', 'total_count', 'expected_assigned_count']]
         var_names = genes['gene']
-        X = csr_matrix(self.counts)
+        X = self.counts.tocsr()
 
         adata = ad.AnnData(
             X=X,
@@ -532,37 +549,40 @@ class Phenium(object):
 
         self.adata = adata
 
-    def run_leiden(self):
-        sc.calculate_qc_metrics(
+    def celltyping(self):
+        self._anndata()
+
+        self.adata = run_leiden(self.adata, gpu=True)
+
+        models.download_models(force_update = True)
+
+        try:
+            model = models.Model.load(
+                model=self.celltypist_model
+            )
+        except FileNotFoundError:
+            print('No such model. Perhaps you mistyped.')
+            print(f'{self.celltypist_model}')
+            return None
+
+        predictions = celltypist.annotate(
             self.adata,
-            percent_top=(50, 100, 200),
-            inplace=True,
-            log1p=False
+            model = self.celltypist_model,
+            majority_voting=True
         )
 
-        sc.pp.filter_cells(self.adata, min_genes=1)
-        sc.pp.filter_genes(self.adata, min_cells=1)
+        adata = predictions.to_adata()
 
-        self.adata_gpu = rsc.get.anndata_to_GPU(
-            self.adata,
-            convert_all=True,
-            copy=True
-        )
+        return adata
 
-        rsc.pp.neighbors(self.adata_gpu, use_rep='X')
-        rsc.tl.leiden(self.adata_gpu)
-        rsc.tl.umap(self.adata_gpu)
+    # def make_sparse_array(img.shape + (proseg_layer,)):
 
-        self.adata = rsc.get.anndata_to_CPU(
-            self.adata_gpu,
-            convert_all=True,
-            copy=True
-        )
-
+    # def assigne_cell(sparse_arr, plygn):
+        
     # def assign_CT_probabilities():
 
     # def assign_stain_to_CT():
 
-    # def assign_pixel_to_cell():
+    # def assign_pixel_to_cell(): why is this here?
 
     # def {function for running cluster_CellTypes, assign_CT, stain_to_Cell}

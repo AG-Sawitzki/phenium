@@ -22,6 +22,9 @@ obj = Phenium(
 obj.prepare(4,6, quick=True, verbose=True)
 obj._run_proseg()
 
+# obj._anndata()
+obj.run_leiden()
+
 ply_path = obj.output_dir / 'cell-polygon-layers.geojson.gz'
 
 output_dir = Path('/data/cephfs-1/scratch/projects/sawitzki-phenium')
@@ -60,9 +63,9 @@ adata = ad.AnnData(X=X, obs=obs.to_pandas(), var=var.to_pandas(), obsm=obsm)
 adata.obs_names = obs_names.to_pandas()
 adata.var_names = var_names.to_pandas()
 
-gdata = rsc.get.anndata_to_GPU(adata, convert_all=True, copy=True)
+sc.calculate_qc_metrics(adata, percent_top=(50, 100, 200), inplace=True, log1p=False)
 
-rsc.pp.calculate_qc_metrics(gdata)
+gdata = rsc.get.anndata_to_GPU(adata, convert_all=True, copy=True)
 
 rsc.pp.log1p(gdata)
 
