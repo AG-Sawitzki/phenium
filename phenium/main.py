@@ -60,7 +60,7 @@ class Phenium(object):
         with open(self.config_path) as f:
             self.config = tomlkit.load(f)
 
-        self.find_sections()
+        self._find_sections()
 
         print('Initialized. Review marked images and provide sections.')
 
@@ -83,21 +83,12 @@ class Phenium(object):
     @property
     def layers(self):
         cell_size = self.config['Basics']['size']
-        return cell_size*2
-
-        # if height:
-        #     bottom = min(self.transcripts['z_location'])
-        #     top = max(self.transcripts['z_location'])
-        #     thickness = top-bottom
-        #     cells_over_z = thickness / height
-        #     return int(cells_over_z*2)
-        # else:    
-        #     store = tifffile.imread(
-        #         self.SRT_dir / 'morphology.ome.tif',
-        #         aszarr=True
-        #     )
-        #     zrr = zarr.open(store, mode='r')
-        #     return zrr['0'].shape[0]
+        diff = self.z_bounds[1]-self.z_bounds[0]
+        layers = int(diff/cell_size * 3)
+        if layers > 3:
+            return layers
+        else:
+            return 3
 
     @property
     def celltypist_model(self):
@@ -114,7 +105,11 @@ class Phenium(object):
 
     @property
     def SRT_section(self):
-        return self._SRT_section
+        try:
+            return self._SRT_section
+        except AttributeError:
+            return None
+
 
     @SRT_section.setter
     def SRT_section(self, SRT_section):
@@ -122,7 +117,10 @@ class Phenium(object):
 
     @property
     def IHC_section(self):
-        return self._IHC_section
+        try:
+            return self._IHC_section
+        except AttributeError:
+            return None
 
     @SRT_section.setter
     def IHC_section(self, IHC_section):
@@ -133,10 +131,34 @@ class Phenium(object):
         transcripts = pl.read_parquet(
             self.SRT_dir / 'transcripts.parquet'
         )
-        transcripts_filterd = self._filter_for_section(
-            transcripts,
-        )
-        return transcripts_filterd
+
+        if self.SRT_section != None:
+            transcripts_filterd = self._filter_for_section(
+                transcripts,
+            )
+            return transcripts_filterd
+        else:
+            return transcripts
+
+    @property
+    def z_bounds(self):
+        table = self.transcripts
+        table = table.rename(ovrlpy.io._10X_GENOMICS_COLUMNS)
+        table = ovrlpy.io._filter_genes(table, ovrlpy.io.XENIUM_CTRLS)
+        arr = table['z'].to_numpy()
+        diff = int(max(arr)-min(arr))
+        hist, edges = np.histogram(arr, bins=diff)
+        elems = 0
+        bins = []
+        i = 0
+        while elems/len(arr) < 0.990:
+            bins_by_size = np.argsort(hist)[::-1]
+            bin_id = bins_by_size[i]
+            elems+=hist[bin_id]
+            bins.append(bin_id)
+            i+=1
+
+        return edges[min(bins)], edges[max(bins)+1]
 
     @property
     def transcripts_path(self):
@@ -227,7 +249,7 @@ class Phenium(object):
     def section_shape(self):
         return self._get_shape()
 
-    def find_sections(
+    def _find_sections(
         self
     ) -> None:
         subresolution_lvl = len(self.SRT_zarr)
@@ -279,12 +301,13 @@ class Phenium(object):
         filtered_table = filter_by_location(
             table,
             self.SRT_coords,
+            self.z_bounds,
             pixelsize=self.SRT_pxsize[0]
         )
 
         return filtered_table
 
-    def find_affine(
+    def _find_affine(
         self,
         quick=False,
         verbose=False
@@ -402,7 +425,7 @@ class Phenium(object):
         self,
         SRT_section,
         IHC_section,
-        skip_affine=False,
+        skip_affine=False, # only for debug. remove later
         quick=True,
         verbose=True
     ):
@@ -431,7 +454,7 @@ class Phenium(object):
         )
 
         if not skip_affine:
-            self.find_affine(quick=quick, verbose=verbose)
+            self._find_affine(quick=quick, verbose=verbose)
 
         if self.priors_type == 'CP':
             self._run_cellpose(
@@ -495,7 +518,6 @@ class Phenium(object):
             self.machine,
             self.transcripts_path,
             self.output_dir,
-            # self.SRT_pxsize[0],
             self.layers,
             self.prior_path
         )
@@ -516,14 +538,13 @@ class Phenium(object):
         self.counts = counts.tocsr()
     
     def _anndata(self):
+        """
+        Only here because loading the spatialdata obj didn't work.
+        Hence, construction by hand.
+        """
         self._load_counts()
         genes = pl.read_parquet(self.output_dir / 'gene-metadata.parquet')
         cells = pl.read_parquet(self.output_dir / 'cell-metadata.parquet')
-        # polygons = gpd.read_file(
-        #     (
-        #         self.output_dir / 'cell-polygon-layers.geojson.gz'
-        #     ).as_uri().replace('file', 'gzip')
-        # )
 
         obs = cells[['original_cell_id', 'cell']]
         obs_names = cells['original_cell_id']
@@ -554,7 +575,14 @@ class Phenium(object):
 
         self.adata = run_leiden(self.adata, gpu=True)
 
-        models.download_models(force_update = True)
+        sc.pl.umap(
+            self.adata,
+            color='leiden',
+            legend_loc='on data',
+            show=False,
+        ).figure.savefig(self.output_dir / 'knn_umap_leiden_gpu.png')
+
+        # models.download_models(force_update = True)
 
         try:
             model = models.Model.load(
@@ -572,6 +600,13 @@ class Phenium(object):
         )
 
         adata = predictions.to_adata()
+
+        sc.pl.umap(
+            adata,
+            color='predicted_labels',
+            legend_loc='on data',
+            show=False,
+        ).figure.savefig(self.output_dir / 'knn_umap_leiden_ct_gpu.png')
 
         return adata
 

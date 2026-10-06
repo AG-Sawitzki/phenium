@@ -20,7 +20,7 @@ size = 4
 #
 # thickness of the sample
 # in micrometer
-thickness = 4
+# thickness = 4
 #
 # celltypist model
 CT_model = 'Immune_All_High.pkl'

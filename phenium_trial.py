@@ -1,6 +1,5 @@
 from pathlib import Path
 
-import numpy as np
 import polars as pl
 import scanpy as sc
 import anndata as ad
@@ -11,6 +10,8 @@ from scipy.io import mmread
 from cupyx.scipy.sparse import csr_matrix
 # import spatialdata
 
+import numpy as np
+import polars
 from phenium.main import Phenium
 obj = Phenium(
     SRT_dir='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260716__161300__20260716_ITCAIM_lung-spleen_run1/output-XETG00410__0064543__lung__20260716__161319',
@@ -22,8 +23,34 @@ obj = Phenium(
 obj.prepare(4,6, quick=True, verbose=True)
 obj._run_proseg()
 
-# obj._anndata()
-obj.run_leiden()
+CTadata = obj.celltyping()
+
+# table = obj.transcripts
+# table = polars.read_parquet(
+#     '/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260716__161300__20260716_ITCAIM_lung-spleen_run1/output-XETG00410__0064543__spleen__20260716__161318/transcripts.parquet'
+# )
+# table = table.rename(ovrlpy.io._10X_GENOMICS_COLUMNS)
+# table = ovrlpy.io._filter_genes(table, ovrlpy.io.XENIUM_CTRLS)
+# arr = table['z'].to_numpy()
+# diff = int(max(arr)-min(arr))
+# hist, edges = np.histogram(arr, bins=diff)
+# elems = 0
+# bins = []
+# i = 0
+# while elems/len(arr) < 0.8:
+# bins_by_size = np.argsort(hist)[::-1]
+# bin_id = bins_by_size[i]
+# elems+=hist[bin_id]
+# bins.append(bin_id)
+# i+=1
+
+# bounds = edges[min(bins):max(bins)+1]
+# print(bins, bounds)
+
+# plt.gcf().clear()
+# plt.hist(arr, bins='auto')
+# plt.gcf().savefig(obj.output_dir / 'spleen_whole_slide_z-hist_filtered.png')
+
 
 ply_path = obj.output_dir / 'cell-polygon-layers.geojson.gz'
 

@@ -22,7 +22,7 @@ import cv2
 import ovrlpy
 import tifffile
 
-from typing import Any, Union, List, Tuple, overload
+from typing import Any, Union, List, Tuple, Dict, overload
 from pathlib import PosixPath
 from numpy.typing import ArrayLike
 
@@ -196,8 +196,9 @@ def bboxes_to_sections(
 
 
 def filter_by_location(
-    table, #: Union[PDF, GDF],
+    table: Union[pl.DataFrame, gpd.GeoDataFrame],
     coords: dict,
+    z_bounds: tuple = None,
     pixelsize: float = None,
 ) -> Union[pl.DataFrame, gpd.GeoDataFrame]:
     """
@@ -214,13 +215,18 @@ def filter_by_location(
         coords : dict
             Dictionary containing min. x,y and max. x,y.
             For an example, see `gt_section.json`
-        pixelsize : float
-            Size of a pixel in X & Y. Optional.
+        z_bounds : tuple, optional
+            Tuple of lower and upper z-Axis boundaries.
+            Only for polars dataframe with "z_location" column.
+        pixelsize : float, optional
+            Size of a pixel in X & Y. Used to scale the bounds in `coords`.
 
     Returns
     -------
         out : polars or geopandas dataframe
-            Same table as input, excluding all entries with coordinates not in `coords`.
+            Same table as input, excluding all entries with coordinates not in
+                `coords` 
+                & `z_bounds`.
     """
     assert depth(coords) == 1, \
         f'`coords` incorrect: {coords}\n Consult example .json!'
@@ -241,6 +247,12 @@ def filter_by_location(
 
             expr = ((pl.col(column)).is_between(
                 var_min, var_max, closed='both'
+            ))
+            table = table.filter(expr)
+        if z_bounds != None and 'z_location' in table.columns:
+            z_low, z_high = z_bounds
+            expr = ((pl.col('z_location')).is_between(
+                z_low, z_high, closed='both'
             ))
             table = table.filter(expr)
     elif isinstance(table, gpd.GeoDataFrame):
@@ -277,7 +289,10 @@ def filter_by_location(
     return table
 
 
-def boundaries_to_mask(table, shape):
+def boundaries_to_mask(
+    table: pl.DataFrame,
+    shape: tuple
+) -> Union[ArrayLike, Dict]:
     """
 
     """
@@ -290,9 +305,9 @@ def boundaries_to_mask(table, shape):
         if len(x) >= 4 or len(y) >= 4:
 
             geometry = Polygon(zip(x,y))
-            data.update(dict(
-                cell_id = geometry
-            ))
+            data.update({
+                cell_id : geometry
+            })
             mask = np.zeros_like(masks, np.uint8)
             cv2.fillPoly(mask, np.int32([geometry]), (1,1,1))
             masks[mask > 0] = cell_id
@@ -300,7 +315,13 @@ def boundaries_to_mask(table, shape):
     return masks, data
 
 
-def transcripts_for_ovrlpy(machine, transcripts):
+def transcripts_for_ovrlpy(
+    machine: str,
+    transcripts: Union[pl.DataFrame, os.PathLike, PosixPath],
+) -> pl.DataFrame:
+    """
+    Rename the columns and filter the genes. Prepares the table for `ovrlpy`.
+    """
     if machine == 'xenium':
         if isinstance(transcripts, (os.PathLike, str)):
             transcripts = ovrlpy.io.read_Xenium(
@@ -329,10 +350,22 @@ def transcripts_for_ovrlpy(machine, transcripts):
     return transcripts
 
 
-def get_pixel_size(img_path) -> Tuple[float, float, float]:
+def get_pixel_size(
+    img_path: Union[str, os.PathLike, PosixPath]
+) -> Tuple[float, float, float]:
     """
     Get pixel size from xml metadata of (OME)Tiff.
-    Returns None for nonexisting Physical Sizes.
+    Returns `-1` for nonexisting Physical Sizes.
+
+    Parameters
+    ----------
+        img_path : str, os.PathLike, PosixPath
+            Path to a *tiff img.
+
+    Returns
+    -------
+        out : tuple
+            Tuple of size 3 with size of a pixel in x,y,z direction.
     """
     with tifffile.TiffFile(img_path) as tiff:
         tags = tiff.pages[0].tags
@@ -355,8 +388,24 @@ def get_pixel_size(img_path) -> Tuple[float, float, float]:
 
 def run_leiden(
     adata,
-    gpu=True,
+    gpu=False,
 ):
+    """
+    Prepare for and then run Leiden on an anndata object.
+
+    Parameters
+    ----------
+        adata : anndata
+            contains genes, counts and cells
+        gpu : bool, optional
+            `True` if a gpu is avaiable and should be used
+            `False` if not. Default is `False`
+    
+    Returns
+    -------
+        out : anndata
+            anndata with "umap", "leiden" in obs(?)
+    """
     sc.pp.log1p(adata)
     sc.pp.calculate_qc_metrics(
         adata,
@@ -371,8 +420,8 @@ def run_leiden(
         adata.X = cupyx.scipy.sparse.csr_matrix(adata.X)
         rsc.get.anndata_to_GPU(adata, convert_all=True)
         rsc.pp.neighbors(adata, use_rep='X')
-        rsc.tl.umap(adata)
         rsc.tl.leiden(adata)
+        rsc.tl.umap(adata)
         rsc.get.anndata_to_CPU(adata, convert_all=True)
         adata.X = scipy.sparse.csr_matrix(adata.X)
     else:
