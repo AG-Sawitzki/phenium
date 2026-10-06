@@ -44,7 +44,7 @@ import zarr
 
 
 
-class Phenium(object):
+class Phenium:
     def __init__(
         self,
         SRT_dir,
@@ -122,7 +122,7 @@ class Phenium(object):
         except AttributeError:
             return None
 
-    @SRT_section.setter
+    @IHC_section.setter
     def IHC_section(self, IHC_section):
         self._IHC_section = IHC_section
 
@@ -142,23 +142,27 @@ class Phenium(object):
 
     @property
     def z_bounds(self):
-        table = self.transcripts
-        table = table.rename(ovrlpy.io._10X_GENOMICS_COLUMNS)
-        table = ovrlpy.io._filter_genes(table, ovrlpy.io.XENIUM_CTRLS)
-        arr = table['z'].to_numpy()
-        diff = int(max(arr)-min(arr))
-        hist, edges = np.histogram(arr, bins=diff)
-        elems = 0
-        bins = []
-        i = 0
-        while elems/len(arr) < 0.990:
-            bins_by_size = np.argsort(hist)[::-1]
-            bin_id = bins_by_size[i]
-            elems+=hist[bin_id]
-            bins.append(bin_id)
-            i+=1
+        if self.SRT_section != None:
+            table = self.transcripts
+            table = table.rename(ovrlpy.io._10X_GENOMICS_COLUMNS)
+            table = ovrlpy.io._filter_genes(table, ovrlpy.io.XENIUM_CTRLS)
+            arr = table['z'].to_numpy()
+            del table
+            diff = int(max(arr)-min(arr))
+            hist, edges = np.histogram(arr, bins=diff)
+            elems = 0
+            bins = []
+            i = 0
+            while elems/len(arr) < 0.990:
+                bins_by_size = np.argsort(hist)[::-1]
+                bin_id = bins_by_size[i]
+                elems+=hist[bin_id]
+                bins.append(bin_id)
+                i+=1
 
-        return edges[min(bins)], edges[max(bins)+1]
+            return edges[min(bins)], edges[max(bins)+1]
+        else:
+            return -np.inf, +np.inf
 
     @property
     def transcripts_path(self):
@@ -286,7 +290,7 @@ class Phenium(object):
 
     def _get_shape(
         self,
-    ) -> Tuple[int, int]:
+    ) -> tuple[int, int]:
         x = self.SRT_coords['x'][1]-self.SRT_coords['x'][0]
         y = self.SRT_coords['y'][1]-self.SRT_coords['y'][0]
 
@@ -301,7 +305,7 @@ class Phenium(object):
         filtered_table = filter_by_location(
             table,
             self.SRT_coords,
-            self.z_bounds,
+            # self.z_bounds,
             pixelsize=self.SRT_pxsize[0]
         )
 
@@ -377,9 +381,9 @@ class Phenium(object):
     def _XOA_masks(self, section):
         path = self.SRT_dir / 'cell_boundaries.parquet'
         table = pl.read_parquet(path)
-        table = self.filter_for_section(section, table)
+        table = self._filter_for_section(table)
         # shape = self.get_shape(section)
-        masks, polygons = boundaries_to_mask(table, self.roi_shape)
+        masks, polygons = boundaries_to_mask(table, self._get_shape)
         np.save(
             self.output_dir / f'XOA_masks_{section}.npy',
             masks,
@@ -393,6 +397,8 @@ class Phenium(object):
         eval_params = self.CP_params['eval']
         style = self.CP_params['style']
         channels = self.CP_params['channels']
+
+        img = 0
 
         if style == 'focus':
             zrr = self.SRT_zarr
@@ -408,18 +414,19 @@ class Phenium(object):
             img = np.dstack(imgs)
             img = np.moveaxis(img, -1, 0)
 
-        masks, flows, styles = cellpose_wrapper(
-            img,
-            model_params,
-            eval_params,
-            style,
-        )
+        if img:
+            masks, _, __ = cellpose_wrapper(
+                img,
+                model_params,
+                eval_params,
+                style,
+            )
 
-        np.save(
-            self.output_dir / f'CP_masks_{self.SRT_section}.npy',
-            masks,
-            allow_pickle=True
-        )
+            np.save(
+                self.output_dir / f'CP_masks_{self.SRT_section}.npy',
+                masks,
+                allow_pickle=True
+            )
 
     def prepare(
         self,
@@ -433,33 +440,30 @@ class Phenium(object):
         Prepare `Phenium` and the input for the Segmentation and Deconvolution.
         '''
         if (
-            (SRT_section in self.SRT_sections.keys())
+            (SRT_section in self.SRT_sections)
             and
-            (IHC_section in self.IHC_sections.keys())
+            (IHC_section in self.IHC_sections)
         ):
             self.SRT_section = SRT_section
             self.IHC_section = IHC_section
         else:
             # this error isn't returned
-            KeyError(f'This section (`{SRT_section}`) does not exist.')
-            return None
-        
+            raise KeyError(f'This section (`{SRT_section}`) does not exist.')
+
         self.transcripts.write_parquet(
             self.transcripts_path,
             compression='snappy',
             use_pyarrow=True,
-            pyarrow_options=dict(
-                version = '1.0',
-            )
+            pyarrow_options={
+                'version' : '1.0',
+            }
         )
 
         if not skip_affine:
             self._find_affine(quick=quick, verbose=verbose)
 
         if self.priors_type == 'CP':
-            self._run_cellpose(
-                SRT_section
-            )
+            self._run_cellpose()
             self.prior_path = self.output_dir / f'CP_masks_{SRT_section}.npy'
         elif self.priors_type == 'XOA':
             self._XOA_masks(
@@ -526,7 +530,7 @@ class Phenium(object):
 
     # def {function for running proseg, get_VSI, compare_VSI}
     #   assign transcripts to layers
-    # 
+    #
     #   get_VSI and compare_VSI must be optional...
     #   hence maybe separate into two functions
 
@@ -536,7 +540,7 @@ class Phenium(object):
         counts_path = self.output_dir / 'counts.mtx.gz'
         counts = mmread(counts_path)
         self.counts = counts.tocsr()
-    
+
     def _anndata(self):
         """
         Only here because loading the spatialdata obj didn't work.
@@ -548,11 +552,11 @@ class Phenium(object):
 
         obs = cells[['original_cell_id', 'cell']]
         obs_names = cells['original_cell_id']
-        obsm = dict(
-            spatial = cells[
+        obsm = {
+            'spatial' : cells[
                 ['centroid_x', 'centroid_y', 'centroid_z']
             ].to_numpy()
-        )
+        }
 
         var = genes[['gene', 'total_count', 'expected_assigned_count']]
         var_names = genes['gene']
@@ -582,10 +586,8 @@ class Phenium(object):
             show=False,
         ).figure.savefig(self.output_dir / 'knn_umap_leiden_gpu.png')
 
-        # models.download_models(force_update = True)
-
         try:
-            model = models.Model.load(
+            _ = models.Model.load(
                 model=self.celltypist_model
             )
         except FileNotFoundError:
@@ -613,7 +615,7 @@ class Phenium(object):
     # def make_sparse_array(img.shape + (proseg_layer,)):
 
     # def assigne_cell(sparse_arr, plygn):
-        
+
     # def assign_CT_probabilities():
 
     # def assign_stain_to_CT():
