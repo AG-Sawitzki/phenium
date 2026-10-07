@@ -4,26 +4,26 @@ name = 'Normann-BPh'
 mail = 'philomina-lillie.normann@bih-charite.de'
 
 
-[Basics]
-# currently only supports xenium
-machine = 'xenium'
-# 
-# choose a prior
-# either 'CP' for cellpose
-# or 'XOA' for Xenium Onboard Analysis
-# or 'None' for priorless proseg-segmenation
-priors = 'None'
-#
-# average cell-thickness (z)
-# in micrometer
-size = 4
-#
-# thickness of the sample
-# in micrometer
-# thickness = 4
-#
-# celltypist model
-CT_model = 'Immune_All_High.pkl'
+# [Basics]
+# # currently only supports xenium
+# machine = 'xenium'
+# # 
+# # choose a prior
+# # either 'CP' for cellpose
+# # or 'XOA' for Xenium Onboard Analysis
+# # or 'None' for priorless proseg-segmenation
+# priors = 'None'
+# #
+# # average cell-thickness (z)
+# # in micrometer
+# size = 4
+# #
+# # thickness of the sample
+# # in micrometer
+# # thickness = 4
+# #
+# # celltypist model
+# CT_model = 'Immune_All_High.pkl'
 
 [proseg]
 # run `proseg --help` in the terminal after installing

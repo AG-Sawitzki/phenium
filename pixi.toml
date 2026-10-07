@@ -3,6 +3,7 @@ authors = ["Philomina"]
 channels = [
     "rapidsai", "nvidia", "conda-forge", "bioconda", "pytorch", "nodefaults", 
 ]
+channel-priority = "flexible"
 name = "phenium"
 platforms = [
     { name = "lida", platform = "linux-64", cuda = "12" },
@@ -25,6 +26,7 @@ antspyx = ">0.6"
 celltypist = ">1.7.0"
 cuda-version = "==12.9"
 cudnn = "*"
+cupy = ">13.6.0"
 cutensor = "*"
 cusparselt = "*"
 # fast_matrix_market = "==1.7.6"

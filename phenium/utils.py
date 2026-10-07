@@ -219,7 +219,7 @@ def filter_by_location(
             Tuple of lower and upper z-Axis boundaries.
             Only for polars dataframe with "z_location" column.
         pixelsize : float, optional
-            Size of a pixel in X & Y. Used to scale the bounds in `coords`.
+            Size of a pixel in X & Y. Used to scale the values in `coords`.
 
     Returns
     -------
@@ -249,12 +249,16 @@ def filter_by_location(
                 var_min, var_max, closed='both'
             ))
             table = table.filter(expr)
+            print(axis, extremes)
+            print(table)
         if z_bounds != None and 'z_location' in table.columns:
             z_low, z_high = z_bounds
             expr = ((pl.col('z_location')).is_between(
                 z_low, z_high, closed='both'
             ))
             table = table.filter(expr)
+            print(z_low, z_high)
+            print(table)
     elif isinstance(table, gpd.GeoDataFrame):
         x_min, x_max = coords['x']
         y_min, y_max = coords['y']
@@ -406,24 +410,27 @@ def run_leiden(
         out : anndata
             anndata with "umap", "leiden" in obs(?)
     """
-    sc.pp.log1p(adata)
     sc.pp.calculate_qc_metrics(
         adata,
         percent_top=(25, 75, 150),
         inplace=True,
         log1p=True
     )
-    # sc.pp.filter_cells(adata, min_genes=1)
-    # sc.pp.filter_genes(adata, min_cells=1)
+
+    sc.pp.filter_cells(adata, min_genes=3)
+    sc.pp.filter_genes(adata, min_cells=3)
+
+    sc.pp.normalize_total(adata, 1e4, max_fraction=0.05)
+
+    sc.pp.log1p(adata)
+    sc.tl.pca(adata, n_comps=100)
 
     if gpu:
-        adata.X = cupyx.scipy.sparse.csr_matrix(adata.X)
         rsc.get.anndata_to_GPU(adata, convert_all=True)
-        rsc.pp.neighbors(adata, use_rep='X')
-        rsc.tl.leiden(adata)
+        rsc.pp.neighbors(adata, n_neighbors=15, n_pcs=20)
+        rsc.tl.leiden(adata, resolution=0.2)
         rsc.tl.umap(adata)
         rsc.get.anndata_to_CPU(adata, convert_all=True)
-        adata.X = scipy.sparse.csr_matrix(adata.X)
     else:
         sc.pp.neighbors(adata)
         sc.tl.umap(adata)

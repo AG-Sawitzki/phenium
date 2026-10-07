@@ -43,38 +43,199 @@ import tomlkit
 import zarr
 
 
-
-class Phenium:
+class IMG:
+    """
+    multi-channel img
+    (c, y, x)
+    """
     def __init__(
         self,
-        SRT_dir,
-        IHC_path,
-        output_dir,
-        config_path,
+        path,
+    ):
+        self.path = Path(path)
+        store = tifffile.imread(self.path, aszarr=True)
+        self.zrr = zarr.open(store, mode='r')
+        self.shape = self.zrr['0'].shape
+        self.pxsize = get_pixel_size(self.path)
+
+        subresolution_lvl = len(self.zrr)
+        bboxes = find_rois(
+            self.shape,
+            self.zrr[str(subresolution_lvl-2)]
+        )
+        self.sections, self.overview = bboxes_to_sections(
+            bboxes,
+            self.shape,
+            self.zrr[str(subresolution_lvl-2)]
+        )
+
+    @property
+    def roi(self):
+        return self._roi
+
+    @roi.setter
+    def roi(self, section):
+        coords = self.sections[section]
+        x = coords['x']
+        y = coords['y']
+        self._roi = self.zrr['0'][:, y[0]:y[1], x[0]:x[1]]
+        ...
+
+
+class IST:
+    """
+    imaging based spatially resolved transcriptomics
+    """
+    def __init__(self, path, pxsize):
+        self.path = Path(path)
+        self.pxsize = float(pxsize)
+        suffix = self.path.suffix
+        if suffix:
+            if suffix == '.parquet':
+                self.table = pl.read_parquet(
+                    self.path
+                )
+            else:
+                raise NotImplementedError(
+                    f'Not yet implemented to read {suffix} files'
+                )
+        else:
+            self.table = pl.read_parquet(
+                self.path / 'transcripts.parquet'
+            )
+
+        arr = self.table.select(
+            pl.col('z_location')
+        ).to_numpy()
+
+        self.z_bounds = arr
+
+    @property
+    def z_bounds(self):
+        return self._z_bounds
+
+    @z_bounds.setter
+    def z_bounds(self, arr):
+        diff = int(max(arr)-min(arr))
+        hist, edges = np.histogram(arr, bins=diff, density=True)
+        density = 0
+        bins = []
+        bins_by_size = np.argsort(hist)[::-1]
+        for b in bins_by_size:
+            bins.append(b)
+            density += hist[b]
+            if density >= 0.990:
+                break
+
+        self._z_bounds = edges[min(bins)], edges[max(bins)+1]
+
+    @property
+    def roi(self):
+        return self._roi
+
+    @roi.setter
+    def roi(self, coords,):
+        self._roi = filter_by_location(
+            self.table,
+            coords,
+            z_bounds=self.z_bounds,
+            pixelsize=self.pxsize
+        )
+
+class Phenium:
+    """
+    ...
+
+    Parameters
+    ----------
+        SRT_dir : 
+            ...
+        IHC_path : 
+            ...
+        output_dir : 
+            ...
+        config_path :
+            ...
+        machine : str, optional
+            xenium
+        prior_type : str, optional
+            none, cellpose, proseg
+        cell_size: int, optional
+            ...
+        celltypist_model : str, optional
+            ...
+
+    Attributes
+    ----------
+        prior_path
+        layers
+        CP_params
+        PS_params
+        SRT_section
+        IHC_section
+        transcripts
+        scaling_factor
+    """
+    def __init__(
+        self,
+        SRT_dir: Union[str, PosixPath],
+        IHC_path: Union[str, PosixPath],
+        output_dir: Union[str, PosixPath],
+        config_path: Union[str, PosixPath],
+        machine: str = 'xenium',
+        prior_type: str = '',
+        cell_size: int = 5,
+        celltypist_model: str = 'Immune_All_Low.pkl',
     )-> None:
         self.SRT_dir = Path(SRT_dir)
         self.IHC_path = Path(IHC_path)
         self.output_dir = Path(output_dir)
-        self.config_path = Path(config_path)
-
-        with open(self.config_path) as f:
+    
+        with open(config_path) as f:
             self.config = tomlkit.load(f)
 
-        self._find_sections()
+        self.machine = machine
+        self.prior_type = prior_type
+        self.cell_size = cell_size
 
-        print('Initialized. Review marked images and provide sections.')
+        if '.pkl' in celltypist_model:
+            self.celltypist_model = celltypist_model
+        else:
+            self.celltypist_model = celltypist_model + '.pkl'
 
-    @property
-    def machine(self):
-        return self.config['Basics']['machine']
+        self.SRT_img = IMG(
+            self.SRT_dir / 'morphology_focus/ch0000_dapi.ome.tif'
+        )
+        tifffile.imwrite(
+            self.output_dir / 'SRT_overview.png',
+            self.SRT_img.overview
+        )
 
-    @property
-    def priors_type(self):
-        return self.config['Basics']['priors']
+        self.IHC_img = IMG(self.IHC_path)
+        tifffile.imwrite(
+            self.output_dir / 'IHC_overview.png',
+            self.IHC_img.overview
+        )
+
+        self.scaling_factor = (
+            self.IHC_img.pxsize[0] / self.SRT_img.pxsize[0]
+        )
+
+        self.IST = IST(self.SRT_dir, self.SRT_img.pxsize[0])
+
+        print(
+            f'Initialized. \n'
+            f'Review marked images in {self.output_dir}.'
+        )
+
+        return None
 
     @property
     def prior_path(self):
-        return self._prior_path
+        try:
+            return self._prior_path
+        except AttributeError:
+            return ''
 
     @prior_path.setter
     def prior_path(self, path: Union[str, PosixPath]):
@@ -82,18 +243,13 @@ class Phenium:
 
     @property
     def layers(self):
-        cell_size = self.config['Basics']['size']
-        diff = self.z_bounds[1]-self.z_bounds[0]
-        layers = int(diff/cell_size * 3)
+        z_bounds = self.IST.z_bounds
+        diff = z_bounds[1]-z_bounds[0]
+        layers = int(diff/self.cell_size * 3)
         if layers > 3:
             return layers
         else:
             return 3
-
-    @property
-    def celltypist_model(self):
-        model = self.config['Basics']['CT_model']
-        return  model
 
     @property
     def CP_params(self):
@@ -110,7 +266,6 @@ class Phenium:
         except AttributeError:
             return None
 
-
     @SRT_section.setter
     def SRT_section(self, SRT_section):
         self._SRT_section = SRT_section
@@ -126,176 +281,6 @@ class Phenium:
     def IHC_section(self, IHC_section):
         self._IHC_section = IHC_section
 
-    @property
-    def transcripts(self):
-        transcripts = pl.read_parquet(
-            self.SRT_dir / 'transcripts.parquet'
-        )
-
-        if self.SRT_section != None:
-            transcripts_filterd = self._filter_for_section(
-                transcripts,
-            )
-            return transcripts_filterd
-        else:
-            return transcripts
-
-    @property
-    def z_bounds(self):
-        if self.SRT_section != None:
-            table = self.transcripts
-            table = table.rename(ovrlpy.io._10X_GENOMICS_COLUMNS)
-            table = ovrlpy.io._filter_genes(table, ovrlpy.io.XENIUM_CTRLS)
-            arr = table['z'].to_numpy()
-            del table
-            diff = int(max(arr)-min(arr))
-            hist, edges = np.histogram(arr, bins=diff)
-            elems = 0
-            bins = []
-            i = 0
-            while elems/len(arr) < 0.990:
-                bins_by_size = np.argsort(hist)[::-1]
-                bin_id = bins_by_size[i]
-                elems+=hist[bin_id]
-                bins.append(bin_id)
-                i+=1
-
-            return edges[min(bins)], edges[max(bins)+1]
-        else:
-            return -np.inf, +np.inf
-
-    @property
-    def transcripts_path(self):
-        transcripts_path = Path(
-            self.output_dir / f'transcripts_{self.SRT_section}.parquet'
-        )
-        return transcripts_path
-
-    @property
-    def SRT_zarr(self):
-        SRT_store = tifffile.imread(
-            self.SRT_dir / 'morphology_focus/ch0000_dapi.ome.tif',
-            aszarr=True
-        )
-        zrr = zarr.open(SRT_store, mode='r')
-        return zrr
-
-    @property
-    def SRT_shape(self):
-        return self.SRT_zarr['0'].shape
-
-    @property
-    def SRT_pxsize(self):
-        pxsize = get_pixel_size(
-            self.SRT_dir / 'morphology_focus/ch0000_dapi.ome.tif'
-        )
-        return pxsize
-
-    @property
-    def IHC_zarr(self):
-        IHC_store = tifffile.imread(
-            self.IHC_path,
-            aszarr=True
-        )
-        zrr = zarr.open(IHC_store, mode='r')
-        return zrr
-
-    @property
-    def IHC_shape(self):
-        return self.IHC_zarr['0'].shape
-
-    @property
-    def IHC_pxsize(self):
-        pxsize = get_pixel_size(
-            self.IHC_path
-        )
-        return pxsize
-
-    @property
-    def scaling_factor(self):
-        factor = self.IHC_pxsize[0]/self.SRT_pxsize[0]
-        return factor
-
-    @property
-    def SRT_sections(self):
-        return self._SRT_sections
-
-    @SRT_sections.setter
-    def SRT_sections(self, sections: dict):
-        self._SRT_sections = sections
-
-    @property
-    def IHC_sections(self):
-        return self._IHC_sections
-
-    @IHC_sections.setter
-    def IHC_sections(self, sections: dict):
-        self._IHC_sections = sections
-
-    @property
-    def SRT_coords(self):
-        return self.SRT_sections[self.SRT_section]
-
-    @property
-    def IHC_coords(self):
-        return self.IHC_sections[self.IHC_section]
-
-    @property
-    def SRT_img(self):
-        img = self.SRT_zarr['0'][
-            :,
-            self.SRT_coords['y'][0]:self.SRT_coords['y'][1],
-            self.SRT_coords['x'][0]:self.SRT_coords['x'][1]
-        ]
-        return img
-
-    @property
-    def section_shape(self):
-        return self._get_shape()
-
-    def _find_sections(
-        self
-    ) -> None:
-        subresolution_lvl = len(self.SRT_zarr)
-        bboxes = find_rois(
-            self.SRT_shape,
-            self.SRT_zarr[str(subresolution_lvl-2)]
-        )
-        self.SRT_sections, marked_img = bboxes_to_sections(
-            bboxes,
-            self.SRT_shape,
-            self.SRT_zarr[str(subresolution_lvl-2)]
-        )
-
-        tifffile.imwrite(
-            self.output_dir / 'marked_regions_SRT.tif',
-            marked_img
-        )
-
-        subresolution_lvl = len(self.IHC_zarr)
-        bboxes = find_rois(
-            self.IHC_shape,
-            self.IHC_zarr[str(subresolution_lvl-1)]
-        )
-        self.IHC_sections, marked_img = bboxes_to_sections(
-            bboxes,
-            self.IHC_shape,
-            self.IHC_zarr[str(subresolution_lvl-1)]
-        )
-
-        tifffile.imwrite(
-            self.output_dir / 'marked_regions_IHC.tif',
-            marked_img
-        )
-
-    def _get_shape(
-        self,
-    ) -> tuple[int, int]:
-        x = self.SRT_coords['x'][1]-self.SRT_coords['x'][0]
-        y = self.SRT_coords['y'][1]-self.SRT_coords['y'][0]
-
-        return x, y
-
     def _filter_for_section(
         self,
         table,
@@ -304,9 +289,8 @@ class Phenium:
         # currently only transcripts are passed...
         filtered_table = filter_by_location(
             table,
-            self.SRT_coords,
-            # self.z_bounds,
-            pixelsize=self.SRT_pxsize[0]
+            self.SRT_img.sections[self.SRT_section],
+            pixelsize=self.SRT_img.pxsize[0]
         )
 
         return filtered_table
@@ -316,12 +300,8 @@ class Phenium:
         quick=False,
         verbose=False
     ) -> None:
-        SRT_img = self.SRT_img[0, :, :]
-        IHC_img = self.IHC_zarr['0'][
-            0,
-            self.IHC_coords['y'][0]:self.IHC_coords['y'][1],
-            self.IHC_coords['x'][0]:self.IHC_coords['x'][1]
-        ]
+        SRT_img = self.SRT_img.roi[0, :, :]
+        IHC_img = self.IHC_img.roi[0, :, :]
         IHC_img = rescale(
             IHC_img,
             self.scaling_factor,
@@ -364,13 +344,15 @@ class Phenium:
         self.reg_fwd = reg['fwdtransforms']
 
     def _transform_IHC_channel(self, channel):
-        img = self.IHC_zarr['0'][
-            channel,
-            self.IHC_coords['y'][0]:self.IHC_coords['y'][1],
-            self.IHC_coords['x'][0]:self.IHC_coords['x'][1]
-        ]
+        img = self.IHC_img.roi[channel, :, :]
+        img = rescale(
+            img,
+            self.scalgin_factor,
+            preserve_range=True
+        )
+        img = np.flip(img)
         transformed_img = ants.apply_transforms(
-            fixed=self.SRT_img[0],
+            fixed=self.SRT_img.roi[0],
             moving=img,
             transformlist=self.reg_fwd,
             interpolator='nearestNeighbor',
@@ -378,18 +360,23 @@ class Phenium:
 
         return transformed_img
 
-    def _XOA_masks(self, section):
+    def _XOA_masks(self):
         path = self.SRT_dir / 'cell_boundaries.parquet'
         table = pl.read_parquet(path)
         table = self._filter_for_section(table)
         # shape = self.get_shape(section)
-        masks, polygons = boundaries_to_mask(table, self._get_shape)
+        masks, polygons = boundaries_to_mask(table, self.SRT_img.roi.shape)
+        
+        self.prior_path = (
+            self.output_dir / f'XOA_masks_{self.SRT_section}.npy'
+        )
+
         np.save(
-            self.output_dir / f'XOA_masks_{section}.npy',
+            self.prior_path,
             masks,
             allow_pickle=True
         )
-        with open(self.output_dir / f'XOA_polygons_{section}.json') as f:
+        with open(self.output_dir / f'XOA_polygons_{self.SRT_section}.json') as f:
             json.dump(f, polygons)
 
     def _run_cellpose(self):
@@ -401,12 +388,7 @@ class Phenium:
         img = 0
 
         if style == 'focus':
-            zrr = self.SRT_zarr
-            img = zrr['0'][
-                channels,
-                self.SRT_coords['y'][0]:self.SRT_coords['y'][1],
-                self.SRT_coords['x'][0]:self.SRT_coords['x'][1]
-            ]
+            img = self.SRT_img.roi[channels, :, :]
         if style == 'pheno':
             imgs = []
             for c in channels:
@@ -422,8 +404,12 @@ class Phenium:
                 style,
             )
 
+            self.prior_path = (
+                self.output_dir / f'CP_masks_{style}_{self.SRT_section}.npy'
+            )
+
             np.save(
-                self.output_dir / f'CP_masks_{self.SRT_section}.npy',
+                self.prior_path,
                 masks,
                 allow_pickle=True
             )
@@ -440,18 +426,22 @@ class Phenium:
         Prepare `Phenium` and the input for the Segmentation and Deconvolution.
         '''
         if (
-            (SRT_section in self.SRT_sections)
+            (SRT_section in self.SRT_img.sections)
             and
-            (IHC_section in self.IHC_sections)
+            (IHC_section in self.IHC_img.sections)
         ):
             self.SRT_section = SRT_section
             self.IHC_section = IHC_section
         else:
-            # this error isn't returned
             raise KeyError(f'This section (`{SRT_section}`) does not exist.')
 
-        self.transcripts.write_parquet(
-            self.transcripts_path,
+        self.SRT_img.roi = SRT_section
+        self.IHC_img.roi = IHC_section
+
+        self.IST.roi = self.SRT_img.sections[SRT_section]
+
+        self.IST.roi.write_parquet(
+            self.output_dir / f'transcripts_{SRT_section}.parquet',
             compression='snappy',
             use_pyarrow=True,
             pyarrow_options={
@@ -462,19 +452,17 @@ class Phenium:
         if not skip_affine:
             self._find_affine(quick=quick, verbose=verbose)
 
-        if self.priors_type == 'CP':
+        if self.prior_type == 'CP':
             self._run_cellpose()
-            self.prior_path = self.output_dir / f'CP_masks_{SRT_section}.npy'
-        elif self.priors_type == 'XOA':
-            self._XOA_masks(
-                SRT_section
-            )
-            self.prior_path = self.output_dir / f'XOA_masks_{SRT_section}.npy'
+            # self.prior_path = self.output_dir / f'CP_masks_{SRT_section}.npy'
+        elif self.prior_type == 'XOA':
+            self._XOA_masks()
+            # self.prior_path = self.output_dir / f'XOA_masks_{SRT_section}.npy'
         else:
             self.prior_path = ''
 
         print(
-            f' Priors set to {self.priors_type}.'
+            f' Priors set to {self.prior_type}.'
             f'\n Prior_path: {self.prior_path}'
         )
 
@@ -520,7 +508,7 @@ class Phenium:
         proseg_wrapper(
             self.PS_params,
             self.machine,
-            self.transcripts_path,
+            self.output_dir / f'transcripts_{self.SRT_section}.parquet',
             self.output_dir,
             self.layers,
             self.prior_path
@@ -612,9 +600,17 @@ class Phenium:
 
         return adata
 
-    # def make_sparse_array(img.shape + (proseg_layer,)):
+    def make_sparse_array(self, shape, layers):
+        # it's not sparse rn. ik.
+        shape = shape + (layers,)
+        arr = np.zeros(shape)
+        return arr
 
     # def assigne_cell(sparse_arr, plygn):
+        # for channel in channels
+            # cell_types = dict[channel] 
+            # cells = all_cell[cell_type in cell_types]
+            # 
 
     # def assign_CT_probabilities():
 
