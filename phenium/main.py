@@ -117,14 +117,14 @@ class IST:
     @z_bounds.setter
     def z_bounds(self, arr):
         diff = int(max(arr)-min(arr))
-        hist, edges = np.histogram(arr, bins=diff, density=True)
-        density = 0
+        hist, edges = np.histogram(arr, bins=diff)
+        elems = 0
         bins = []
         bins_by_size = np.argsort(hist)[::-1]
         for b in bins_by_size:
             bins.append(b)
-            density += hist[b]
-            if density >= 0.990:
+            elems += hist[b]
+            if elems/len(arr) >= 0.990:
                 break
 
         self._z_bounds = edges[min(bins)], edges[max(bins)+1]
@@ -562,10 +562,10 @@ class Phenium:
 
         self.adata = adata
 
-    def celltyping(self):
+    def celltyping(self, gpu=True):
         self._anndata()
 
-        self.adata = run_leiden(self.adata, gpu=True)
+        self.adata = run_leiden(self.adata, gpu=gpu)
 
         sc.pl.umap(
             self.adata,
@@ -574,31 +574,48 @@ class Phenium:
             show=False,
         ).figure.savefig(self.output_dir / 'knn_umap_leiden_gpu.png')
 
-        try:
-            _ = models.Model.load(
-                model=self.celltypist_model
-            )
-        except FileNotFoundError:
-            print('No such model. Perhaps you mistyped.')
-            print(f'{self.celltypist_model}')
-            return None
-
-        predictions = celltypist.annotate(
+        sc.tl.rank_genes_groups(
             self.adata,
-            model = self.celltypist_model,
-            majority_voting=True
+            groupby='leiden'
         )
 
-        adata = predictions.to_adata()
+        self.adata.write_h5ad(
+            self.output_dir / 'adata.h5ad',
+        )
 
-        sc.pl.umap(
-            adata,
-            color='predicted_labels',
-            legend_loc='on data',
+        rgg = self.adata.uns['rank_genes_groups']
+
+        cluster = len(self.adata.uns['leiden_colors'])
+
+        pdf = pl.DataFrame()
+
+        for c in range(cluster):
+            data = {
+                'genes' : rgg['names'][str(c)],
+                'cluster': [c]*len(rgg['names'][str(c)]),
+                'pvals' : rgg['pvals_adj'][str(c)],
+                'logfc' : rgg['logfoldchanges'][str(c)],
+            }
+            temp_pdf = pl.DataFrame(
+                data=data
+            ).sort('pvals')
+            expr = (pl.col('pvals') < 0.01)
+            temp_pdf = temp_pdf.filter(expr)
+            pdf = pl.concat([pdf, temp_pdf])
+
+        pdf.write_csv(self.output_dir / 'ranked_genes.csv')
+
+        sc.pl.rank_genes_groups_dotplot(
+            self.adata,
+            n_genes=3,
+            values_to_plot='logfoldchanges',
+            cmap='bwr',
+            colorbar_title='log fold change',
             show=False,
-        ).figure.savefig(self.output_dir / 'knn_umap_leiden_ct_gpu.png')
+            figsize = (12,6),
+        )['mainplot_ax'].figure.savefig(self.output_dir / 'ranked_genes_dotplot.png')
 
-        return adata
+        # return adata
 
     def make_sparse_array(self, shape, layers):
         # it's not sparse rn. ik.

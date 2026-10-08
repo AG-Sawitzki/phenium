@@ -14,15 +14,15 @@ import numpy as np
 import polars
 from phenium.main import Phenium
 obj = Phenium(
-    SRT_dir='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260716__161300__20260716_ITCAIM_lung-spleen_run1/output-XETG00410__0064543__lung__20260716__161319',
+    SRT_dir='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260716__161300__20260716_ITCAIM_lung-spleen_run1/output-XETG00410__0064543__spleen__20260716__161318',
 IHC_path='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260723_ITCAIM_Phenium_Slide1/Scan1/20260723_ITCAIM_Phenium_Slide1_Scan1.er.qptiff',
 output_dir='/data/cephfs-1/scratch/projects/sawitzki-phenium',
 config_path='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/phenium/config.toml',
 )
 
-obj.prepare(4, 7, quick=True, verbose=True, skip_affine=True)
+obj.prepare(1, 16, quick=True, verbose=True, skip_affine=True)
 
-CTadata = obj.celltyping()
+obj.celltyping(gpu=False)
 
 # table = obj.transcripts
 # table = polars.read_parquet(

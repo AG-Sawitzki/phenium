@@ -29,6 +29,7 @@ cudnn = "*"
 cupy = ">13.6.0"
 cutensor = "*"
 cusparselt = "*"
+# dgl = "<=1.1.2,<=2.1.0" for STAMapper
 # fast_matrix_market = "==1.7.6"
 fastremap = "*"
 fill-voids = "*"
@@ -42,6 +43,7 @@ pytorch-gpu = "*"
 rapids = { version = "26.*", channel = "rapidsai" }
 roifile = "*"
 rust = "==1.88.0"
+# scanpy = ">=1.9.1" for STAMapper
 shapely = "*"
 spatialdata = ">=0.7.2"
 tifffile = ">=2026,<2027"

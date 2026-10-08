@@ -250,7 +250,7 @@ def filter_by_location(
             ))
             table = table.filter(expr)
             print(axis, extremes)
-            print(table)
+            print(table.shape)
         if z_bounds != None and 'z_location' in table.columns:
             z_low, z_high = z_bounds
             expr = ((pl.col('z_location')).is_between(
@@ -258,7 +258,7 @@ def filter_by_location(
             ))
             table = table.filter(expr)
             print(z_low, z_high)
-            print(table)
+            print(table.shape)
     elif isinstance(table, gpd.GeoDataFrame):
         x_min, x_max = coords['x']
         y_min, y_max = coords['y']
@@ -421,19 +421,19 @@ def run_leiden(
     sc.pp.filter_genes(adata, min_cells=3)
 
     sc.pp.normalize_total(adata, 1e4, max_fraction=0.05)
-
     sc.pp.log1p(adata)
+
     sc.tl.pca(adata, n_comps=100)
 
     if gpu:
         rsc.get.anndata_to_GPU(adata, convert_all=True)
         rsc.pp.neighbors(adata, n_neighbors=15, n_pcs=20)
-        rsc.tl.leiden(adata, resolution=0.2)
         rsc.tl.umap(adata)
+        rsc.tl.leiden(adata, resolution=0.1)
         rsc.get.anndata_to_CPU(adata, convert_all=True)
     else:
-        sc.pp.neighbors(adata)
+        sc.pp.neighbors(adata, n_neighbors=15, n_pcs=20)
         sc.tl.umap(adata)
-        sc.tl.leiden(adata)
+        sc.tl.leiden(adata, resolution=0.2)
 
     return adata
