@@ -45,7 +45,8 @@ roifile = "*"
 rust = "==1.88.0"
 # scanpy = ">=1.9.1" for STAMapper
 shapely = "*"
-spatialdata = ">=0.7.2"
+spatialdata = ">=0.6.0"
+squidpy = ">=1.8.0,<2"
 tifffile = ">=2026,<2027"
 tomlkit = "*"
 torchvision = "*"
@@ -60,4 +61,3 @@ opencv-python-headless = ">=4.13.0"
 ovrlpy = "*"
 pyarrow = "*"
 rapids-singlecell-cu12 = { version = "*" }
-spatialdata = { version = "*", extras = ["torch"] }

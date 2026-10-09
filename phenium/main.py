@@ -4,8 +4,8 @@ from phenium.utils import (
     filter_by_location,
     boundaries_to_mask,
     transcripts_for_ovrlpy,
-    # find_transform,
     get_pixel_size,
+    get_biomarkers,
     run_leiden,
 )
 from phenium.exceptions import (
@@ -32,6 +32,7 @@ import numpy as np
 import polars as pl
 import rapids_singlecell as rsc
 import scanpy as sc
+import squidpy as sq
 from scipy.io import loadmat, mmread
 from skimage.transform import rescale
 from celltypist import models
@@ -80,6 +81,15 @@ class IMG:
         y = coords['y']
         self._roi = self.zrr['0'][:, y[0]:y[1], x[0]:x[1]]
         ...
+
+    @property
+    def biomarkers(self):
+        if self.path.suffix() == 'qptiff':
+            biomarkers = get_biomarkers(self.path)
+        else:
+            biomarkers = {}
+        
+        return biomarkers
 
 
 class IST:
@@ -162,8 +172,6 @@ class Phenium:
             none, cellpose, proseg
         cell_size: int, optional
             ...
-        celltypist_model : str, optional
-            ...
 
     Attributes
     ----------
@@ -185,7 +193,6 @@ class Phenium:
         machine: str = 'xenium',
         prior_type: str = '',
         cell_size: int = 5,
-        celltypist_model: str = 'Immune_All_Low.pkl',
     )-> None:
         self.SRT_dir = Path(SRT_dir)
         self.IHC_path = Path(IHC_path)
@@ -197,11 +204,6 @@ class Phenium:
         self.machine = machine
         self.prior_type = prior_type
         self.cell_size = cell_size
-
-        if '.pkl' in celltypist_model:
-            self.celltypist_model = celltypist_model
-        else:
-            self.celltypist_model = celltypist_model + '.pkl'
 
         self.SRT_img = IMG(
             self.SRT_dir / 'morphology_focus/ch0000_dapi.ome.tif'
@@ -538,13 +540,14 @@ class Phenium:
         genes = pl.read_parquet(self.output_dir / 'gene-metadata.parquet')
         cells = pl.read_parquet(self.output_dir / 'cell-metadata.parquet')
 
+        spatial = cells[
+            ['centroid_x', 'centroid_y'] # , 'centroid_z']
+        ].to_numpy()
+        spatial_scaled = spatial * self.SRT_img.pxsize[0]
+
         obs = cells[['original_cell_id', 'cell']]
         obs_names = cells['original_cell_id']
-        obsm = {
-            'spatial' : cells[
-                ['centroid_x', 'centroid_y', 'centroid_z']
-            ].to_numpy()
-        }
+        obsm = {'spatial' : spatial_scaled}
 
         var = genes[['gene', 'total_count', 'expected_assigned_count']]
         var_names = genes['gene']
@@ -560,19 +563,31 @@ class Phenium:
         adata.obs_names = obs_names.to_pandas()
         adata.var_names = var_names.to_pandas()
 
+        # library_id = f'tissue_{self.SRT_section}'
+        # metadata = {
+        #     'images': {'hires': self.SRT_img.roi[0, :, :]},
+        #     'scalefactors': {
+        #         'tissue_hires_scalef': 1,
+        #         'spot_diameter_fullres': 0.25,
+        #     },
+        # }
+        # adata.uns['spatial'] = {library_id: metadata}
+
         self.adata = adata
 
-    def celltyping(self, gpu=True):
+    def celltyping(self, resolution=0.25, rank_genes=True, gpu=True):
         self._anndata()
 
-        self.adata = run_leiden(self.adata, gpu=gpu)
+        self.adata = run_leiden(self.adata, resolution=resolution, gpu=gpu)
 
         sc.pl.umap(
             self.adata,
             color='leiden',
             legend_loc='on data',
             show=False,
-        ).figure.savefig(self.output_dir / 'knn_umap_leiden_gpu.png')
+        ).figure.savefig(
+            self.output_dir / f'knn_umap_leiden_r{resolution}.png'
+        )
 
         sc.tl.rank_genes_groups(
             self.adata,
@@ -580,42 +595,79 @@ class Phenium:
         )
 
         self.adata.write_h5ad(
-            self.output_dir / 'adata.h5ad',
+            self.output_dir / f'adata_r{resolution}.h5ad',
         )
 
-        rgg = self.adata.uns['rank_genes_groups']
+        if rank_genes:
+            rgg = self.adata.uns['rank_genes_groups']
+            cluster = len(self.adata.uns['leiden_colors'])
+            temp_pdf_list = []
+            for c in range(cluster):
+                temp_pdf = pl.DataFrame(
+                    data={
+                        'genes' : rgg['names'][str(c)],
+                        'cluster': [c]*len(rgg['names'][str(c)]),
+                        'pvals' : rgg['pvals_adj'][str(c)],
+                        'logfc' : rgg['logfoldchanges'][str(c)],
+                    }
+                ).sort('pvals')
+                temp_pdf_list.append(temp_pdf.filter(
+                    (pl.col('pvals') < 0.01)
+                ))
+            pdf = pl.concat(temp_pdf_list)
+            pdf.write_csv(self.output_dir / f'ranked_genes_r{resolution}.csv')
 
-        cluster = len(self.adata.uns['leiden_colors'])
+            sc.pl.rank_genes_groups_dotplot(
+                self.adata,
+                n_genes=3,
+                values_to_plot='logfoldchanges',
+                cmap='bwr',
+                colorbar_title='log fold change',
+                show=False,
+                figsize = (12,6),
+            )['mainplot_ax'].figure.savefig(
+                self.output_dir / f'ranked_genes_dotplot_r{resolution}.png'
+            )
 
-        pdf = pl.DataFrame()
-
-        for c in range(cluster):
-            data = {
-                'genes' : rgg['names'][str(c)],
-                'cluster': [c]*len(rgg['names'][str(c)]),
-                'pvals' : rgg['pvals_adj'][str(c)],
-                'logfc' : rgg['logfoldchanges'][str(c)],
-            }
-            temp_pdf = pl.DataFrame(
-                data=data
-            ).sort('pvals')
-            expr = (pl.col('pvals') < 0.01)
-            temp_pdf = temp_pdf.filter(expr)
-            pdf = pl.concat([pdf, temp_pdf])
-
-        pdf.write_csv(self.output_dir / 'ranked_genes.csv')
-
-        sc.pl.rank_genes_groups_dotplot(
+        sq.pl.spatial_scatter(
             self.adata,
-            n_genes=3,
-            values_to_plot='logfoldchanges',
-            cmap='bwr',
-            colorbar_title='log fold change',
-            show=False,
-            figsize = (12,6),
-        )['mainplot_ax'].figure.savefig(self.output_dir / 'ranked_genes_dotplot.png')
+            shape=None,
+            color='leiden',
+            size=50,
+            figsize=(50,50),
+            save=(
+                self.output_dir / f'spatial_scatter_leiden_r{resolution}.jpg'
+            )
+        )
 
-        # return adata
+        # predictions = celltypist.annotate(
+        #     self.adata,
+        #     model=model,
+        #     majority_voting=True,
+        #     use_GPU=gpu
+        # )
+
+        # ctadata = predictions.to_adata()
+
+        # sc.pl.umap(
+        #     ctadata,
+        #     color='predicted_labels',
+        #     legend_loc='on data',
+        #     show=False,
+        # ).figure.savefig(self.output_dir / 'knn_umap_leiden_ct.png')
+
+        return self.adata
+
+    # def rename_cluster(self, new_names):
+    #     old_names = self.adata.obs['leiden']
+    #     mapping_names = dict(
+    #         zip(old_names, new_names)
+    #     )
+    #     self.adata.obs['named_cluster'] = (
+    #         self.adata.obs['leiden'].map(
+    #             mapping_names
+    #         ).astype('category')
+    #     )
 
     def make_sparse_array(self, shape, layers):
         # it's not sparse rn. ik.

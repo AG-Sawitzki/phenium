@@ -127,7 +127,7 @@ def find_rois(
     )
 
     bboxes_to_keep = np.array(bboxes)[ids_to_keep]
-    bboxes_sorted = sorted(bboxes_to_keep, key=lambda k: [int(k[1]/100), k[0]])
+    bboxes_sorted = sorted(bboxes_to_keep, key=lambda k: [int(k[1]/100) + k[0]])
 
     return bboxes_sorted
 
@@ -378,7 +378,7 @@ def get_pixel_size(
     pixels = root.find('.//*[@PhysicalSizeX]')
     if isinstance(pixels, ET.Element):
         px_size_X = pixels.get('PhysicalSizeX')
-        px_size_Y = pixels.get('PhysicalSizeY')
+        px_size_Y = pixels.get('PhysicalSizeY', default=px_size_X)
         px_size_Z = pixels.get('PhysicalSizeZ', default=-1)
     elif isinstance(pixels, type(None)):
         px_size_X = tags[282].value[1]/tags[282].value[0]*1e4
@@ -390,9 +390,48 @@ def get_pixel_size(
     return float(px_size_X), float(px_size_Y), float(px_size_Z)
 
 
+def get_biomarkers(img_path):
+    # function written based on grenkoca/qptifffile.
+    with tifffile.TiffFifle(img_path) as tif:
+        pages = tif.series[0].pages
+
+    biomarkers = {}
+    
+    biomarker_paths = [
+        './/Biomarker',
+        './/BioMarker',
+        './/BioMarker/Name',
+        './/Biomarker/Name',
+        './/StainName',
+        './/Marker',
+        './/ProteinMarker'
+    ]
+
+    for page_idx, page in enumerate(pages):
+        if hasattr(page, 'description') and page.description:
+            root = ET.fromstring(page.description)
+            for path in biomarker_paths:
+                idx = biomarker_paths.index(path)
+                element = root.find(path)
+                if element is not None and element.text:
+                    biomarkers[str(page_idx)] = element.text
+                    if idx > 0:
+                        biomarker_paths.insert(
+                            0,
+                            biomarker_paths.pop(idx)
+                        )
+                    break
+
+    if len(biomarkers) == len(pages):
+        return biomarkers
+    else:
+        raise ValueError('Not all pages have a biomarker.')
+
+
 def run_leiden(
     adata,
-    gpu=False,
+    resolution: float = 0.25,
+    gpu: bool = False,
 ):
     """
     Prepare for and then run Leiden on an anndata object.
@@ -420,20 +459,20 @@ def run_leiden(
     sc.pp.filter_cells(adata, min_genes=3)
     sc.pp.filter_genes(adata, min_cells=3)
 
-    sc.pp.normalize_total(adata, 1e4, max_fraction=0.05)
+    sc.pp.normalize_total(adata, 1e4)
     sc.pp.log1p(adata)
 
     sc.tl.pca(adata, n_comps=100)
 
     if gpu:
         rsc.get.anndata_to_GPU(adata, convert_all=True)
-        rsc.pp.neighbors(adata, n_neighbors=15, n_pcs=20)
+        rsc.pp.neighbors(adata, n_neighbors=15, n_pcs=40)
         rsc.tl.umap(adata)
-        rsc.tl.leiden(adata, resolution=0.1)
+        rsc.tl.leiden(adata, resolution=resolution)
         rsc.get.anndata_to_CPU(adata, convert_all=True)
     else:
-        sc.pp.neighbors(adata, n_neighbors=15, n_pcs=20)
+        sc.pp.neighbors(adata, n_neighbors=15, n_pcs=40)
         sc.tl.umap(adata)
-        sc.tl.leiden(adata, resolution=0.2)
+        sc.tl.leiden(adata, resolution=resolution)
 
     return adata
