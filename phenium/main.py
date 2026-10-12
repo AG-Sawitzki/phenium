@@ -33,8 +33,10 @@ import polars as pl
 import rapids_singlecell as rsc
 import scanpy as sc
 import squidpy as sq
+from scipy import stats
 from scipy.io import loadmat, mmread
 from skimage.transform import rescale
+from sklearn.ensemble import IsolationForest
 from celltypist import models
 import ants
 import ovrlpy
@@ -114,11 +116,18 @@ class IST:
                 self.path / 'transcripts.parquet'
             )
 
+        self.adjust_z()
+
+        # i don't like this
         arr = self.table.select(
             pl.col('z_location')
         ).to_numpy()
-
         self.z_bounds = arr
+
+
+    @property
+    def fov_names(self):
+        return list(set(self.table['fov_name']))
 
     @property
     def z_bounds(self):
@@ -134,7 +143,7 @@ class IST:
         for b in bins_by_size:
             bins.append(b)
             elems += hist[b]
-            if elems/len(arr) >= 0.990:
+            if elems/len(arr) >= 0.9:
                 break
 
         self._z_bounds = edges[min(bins)], edges[max(bins)+1]
@@ -151,6 +160,51 @@ class IST:
             z_bounds=self.z_bounds,
             pixelsize=self.pxsize
         )
+
+    def adjust_z(self):
+        x = self.table['x_location'].to_numpy()[::100]
+        y = self.table['y_location'].to_numpy()[::100]
+        z = self.table['z_location'].to_numpy()[::100]
+
+
+        res_x = stats.linregress(x, z)
+        res_y = stats.linregress(y, z)
+
+        if res_x.slope < res_y.slope:
+            res = res_y
+            col = 'y_location'
+        else:
+            res = res_x
+            col = 'x_location'
+
+        model = IsolationForest(contamination=0.025)
+
+        for fov in self.fov_names:
+            table_ = self.table.filter(pl.col('fov_name') == fov)
+            exog = max(table_[col])
+
+            self.table.with_columns(
+                pl.when(
+                    pl.col('fov_name') == fov
+                ).then(
+                    pl.col('z_location') - (res.intercept + res.slope*exog)
+                ).otherwise(
+                    pl.col('z_location')
+                )
+            )
+
+        exog_endog = np.column_stack(
+            [self.table[col].to_numpy(),
+             self.table['z_location'].to_numpy()]
+        )
+
+        pred = model.fit_predict(exog_endog)
+        # filter with pred
+        # maybe add as column and then do a when then
+        # afterwards remove
+            
+
+
 
 class Phenium:
     """
