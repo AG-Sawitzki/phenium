@@ -73,7 +73,6 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/double-conversion-3.3.1-h5888daf_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/eigen-5.0.1-h19c2612_3.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/expat-2.8.5-hd2095e1_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/fastloess-3.0.0-py313ha48717d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/fastremap-1.20.0-py313hcc39c74_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/fftw-3.3.11-nompi_h3b011a4_100.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/fill-voids-2.1.2-py313hfaae9d9_0.conda
@@ -1527,24 +1526,6 @@ packages:
     - libexpat >=2.8.5,<3.0a0
   size: 151545
   timestamp: 1790346253137
-- conda: https://conda.anaconda.org/conda-forge/linux-64/fastloess-3.0.0-py313ha48717d_0.conda
-  sha256: 08c4da68e3add1d925872ddc5adeead66a2da4fcc900271b722ea5ad907743c2
-  md5: d9ec6641cf65cbfea37eea80f6c95ab3
-  depends:
-  - python
-  - numpy >=1.20
-  - libgcc >=15
-  - __glibc >=2.17,<3.0.a0
-  - numpy >=1.25,<3
-  - python_abi 3.13.* *_cp313
-  constrains:
-  - __glibc >=2.17
-  license: MIT AND Apache-2.0
-  purls:
-  - pkg:pypi/fastloess?source=hash-mapping
-  run_exports: {}
-  size: 663602
-  timestamp: 1791407741838
 - conda: https://conda.anaconda.org/conda-forge/linux-64/fastremap-1.20.0-py313hcc39c74_1.conda
   sha256: cb8f10ecc18bc84941e9064fe7ce92e4cce1c0df7f86e72f1462da992e6d8b29
   md5: 87251d95fa32c1908a95661312825691

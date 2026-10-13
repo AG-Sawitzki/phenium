@@ -27,20 +27,15 @@ from typing import Union, Tuple
 
 # import fast_matrix_market as fmm
 import anndata as ad
-import geopandas as gpd
 import numpy as np
 import polars as pl
-import rapids_singlecell as rsc
 import scanpy as sc
 import squidpy as sq
 from scipy import stats
 from scipy.io import loadmat, mmread
 from skimage.transform import rescale
-from sklearn.ensemble import IsolationForest
-from celltypist import models
 import ants
 import ovrlpy
-import celltypist
 import tifffile
 import tomlkit
 import zarr
@@ -119,34 +114,34 @@ class IST:
         self.adjust_z()
 
         # i don't like this
-        arr = self.table.select(
-            pl.col('z_location')
-        ).to_numpy()
-        self.z_bounds = arr
+        # arr = self.table.select(
+        #     pl.col('z_location')
+        # ).to_numpy()
+        # self.z_bounds = arr
 
 
     @property
     def fov_names(self):
         return list(set(self.table['fov_name']))
 
-    @property
-    def z_bounds(self):
-        return self._z_bounds
+    # @property
+    # def z_bounds(self):
+    #     return self._z_bounds
 
-    @z_bounds.setter
-    def z_bounds(self, arr):
-        diff = int(max(arr)-min(arr))
-        hist, edges = np.histogram(arr, bins=diff)
-        elems = 0
-        bins = []
-        bins_by_size = np.argsort(hist)[::-1]
-        for b in bins_by_size:
-            bins.append(b)
-            elems += hist[b]
-            if elems/len(arr) >= 0.9:
-                break
+    # @z_bounds.setter
+    # def z_bounds(self, arr):
+    #     diff = int(max(arr)-min(arr))
+    #     hist, edges = np.histogram(arr, bins=diff)
+    #     elems = 0
+    #     bins = []
+    #     bins_by_size = np.argsort(hist)[::-1]
+    #     for b in bins_by_size:
+    #         bins.append(b)
+    #         elems += hist[b]
+    #         if elems/len(arr) >= 0.9:
+    #             break
 
-        self._z_bounds = edges[min(bins)], edges[max(bins)+1]
+    #     self._z_bounds = edges[min(bins)], edges[max(bins)+1]
 
     @property
     def roi(self):
@@ -161,10 +156,11 @@ class IST:
             pixelsize=self.pxsize
         )
 
-    def adjust_z(self):
-        x = self.table['x_location'].to_numpy()[::100]
-        y = self.table['y_location'].to_numpy()[::100]
-        z = self.table['z_location'].to_numpy()[::100]
+    def adjust_z(self, return_copy=False):
+        table = self.table
+        x = table['x_location'].to_numpy()[::100]
+        y = table['y_location'].to_numpy()[::100]
+        z = table['z_location'].to_numpy()[::100]
 
 
         res_x = stats.linregress(x, z)
@@ -177,13 +173,11 @@ class IST:
             res = res_x
             col = 'x_location'
 
-        model = IsolationForest(contamination=0.025)
-
         for fov in self.fov_names:
-            table_ = self.table.filter(pl.col('fov_name') == fov)
+            table_ = table.filter(pl.col('fov_name') == fov)
             exog = max(table_[col])
 
-            self.table.with_columns(
+            table.with_columns(
                 pl.when(
                     pl.col('fov_name') == fov
                 ).then(
@@ -193,17 +187,56 @@ class IST:
                 )
             )
 
-        exog_endog = np.column_stack(
-            [self.table[col].to_numpy(),
-             self.table['z_location'].to_numpy()]
+        z_kde = stats.gaussian_kde(table['z_location'].to_numpy())
+
+        z_min = table.select(pl.min('z_location'))
+        z_max = table.select(pl.max('z_location'))
+
+        z_space = np.linspace(z_min, z_max, 50).ravel()
+
+        z_density = z_kde(z_space)
+
+        z_density_argsort = np.argsort(z_density)[::-1]
+
+        z_min = 0
+        z_max = 0
+        density_sum = 0
+        for z_idx in z_density_argsort:
+            dens = z_density[z_idx]
+            z_val = z_space[z_idx]
+            density_sum += dens
+            if z_min == 0:
+                z_min = z_val
+            if z_max == 0:
+                z_max = z_val
+            if z_val < z_min:
+                z_min = z_val
+            elif z_max < z_val:
+                z_max = z_val
+            else:
+                continue
+            if density_sum/sum(z_density) > 0.9:
+                break
+
+        expr = (
+            pl.col('z_location').is_between(
+                z_min, z_max, closed='both'
+            )
         )
+        table = table.filter(expr)
 
-        pred = model.fit_predict(exog_endog)
-        # filter with pred
-        # maybe add as column and then do a when then
-        # afterwards remove
-            
+        table = table.with_columns(
+            pl.col('z_location') - z_min
+        )
+        
+        z = table.select('z_location').to_numpy()
+        self.z_bounds = (z.min(), z.max())
 
+        if return_copy:
+            return table
+        else:
+            self.table = table
+            return
 
 
 class Phenium:
@@ -252,6 +285,8 @@ class Phenium:
         self.IHC_path = Path(IHC_path)
         self.output_dir = Path(output_dir)
     
+        Path(self.output_dir / 'plots/').mkdir(parents=False, exist_ok=True)
+
         with open(config_path) as f:
             self.config = tomlkit.load(f)
 
@@ -522,7 +557,7 @@ class Phenium:
             f'\n Prior_path: {self.prior_path}'
         )
 
-    def calculate_VSI(self, transcripts, **kwargs):
+    def calculate_VSI(self, transcripts, plot=True, **kwargs):
         cdf = transcripts_for_ovrlpy(
             machine=self.machine,
             transcripts=transcripts,
@@ -554,6 +589,20 @@ class Phenium:
             # genes,
             # fit_umap,
         )
+
+        if plot:
+            fig = ovrlpy.plot_signal_integrity(
+                ovrlpy_dataset,
+                signal_threshold=4,
+            )
+            fig.savefig(
+                self.output_path / 'plots/signal_integrity_map.pdf'
+            )
+
+            fig = ovrlpy.plot_pseudocells(ovrlpy_dataset)
+            fig.savefig(
+                self.output_path / 'plots/pseudocells.pdf'
+            )
 
         return ovrlpy_dataset.integrity_map, ovrlpy_dataset.signal_map
 
@@ -629,32 +678,44 @@ class Phenium:
 
         self.adata = adata
 
-    def celltyping(self, resolution=0.25, rank_genes=True, gpu=True):
+    def rank_genes(
+        self,
+        resolution=0.25,
+        gpu=False,
+        return_copy=False,
+        as_csv=True,
+        as_dotplot=True,
+        as_spatial_scatter=True,
+    ):
         self._anndata()
 
-        self.adata = run_leiden(self.adata, resolution=resolution, gpu=gpu)
+        adata = self.adata
+
+        adata = run_leiden(adata, resolution=resolution, gpu=gpu)
 
         sc.pl.umap(
-            self.adata,
+            adata,
             color='leiden',
             legend_loc='on data',
             show=False,
         ).figure.savefig(
-            self.output_dir / f'knn_umap_leiden_r{resolution}.png'
+            self.output_dir / (
+                f'plots/knn_umap_leiden_r{resolution}.pdf'
+            )
         )
 
         sc.tl.rank_genes_groups(
-            self.adata,
+            adata,
             groupby='leiden'
         )
 
-        self.adata.write_h5ad(
+        adata.write_h5ad(
             self.output_dir / f'adata_r{resolution}.h5ad',
         )
 
-        if rank_genes:
-            rgg = self.adata.uns['rank_genes_groups']
-            cluster = len(self.adata.uns['leiden_colors'])
+        if as_csv:
+            rgg = adata.uns['rank_genes_groups']
+            cluster = len(adata.uns['leiden_colors'])
             temp_pdf_list = []
             for c in range(cluster):
                 temp_pdf = pl.DataFrame(
@@ -671,8 +732,9 @@ class Phenium:
             pdf = pl.concat(temp_pdf_list)
             pdf.write_csv(self.output_dir / f'ranked_genes_r{resolution}.csv')
 
+        if as_dotplot:
             sc.pl.rank_genes_groups_dotplot(
-                self.adata,
+                adata,
                 n_genes=3,
                 values_to_plot='logfoldchanges',
                 cmap='bwr',
@@ -680,19 +742,24 @@ class Phenium:
                 show=False,
                 figsize = (12,6),
             )['mainplot_ax'].figure.savefig(
-                self.output_dir / f'ranked_genes_dotplot_r{resolution}.png'
+                self.output_dir / (
+                    f'plots/ranked_genes_dotplot_r{resolution}.pdf'
+                )
             )
 
-        sq.pl.spatial_scatter(
-            self.adata,
-            shape=None,
-            color='leiden',
-            size=50,
-            figsize=(50,50),
-            save=(
-                self.output_dir / f'spatial_scatter_leiden_r{resolution}.jpg'
+        if as_spatial_scatter:
+            sq.pl.spatial_scatter(
+                adata,
+                shape=None,
+                color='leiden',
+                size=50,
+                figsize=(50,50),
+                save=(
+                    self.output_dir / (
+                        f'plots/spatial_scatter_leiden_r{resolution}.pdf'
+                    )
+                )
             )
-        )
 
         # predictions = celltypist.annotate(
         #     self.adata,
@@ -710,7 +777,11 @@ class Phenium:
         #     show=False,
         # ).figure.savefig(self.output_dir / 'knn_umap_leiden_ct.png')
 
-        return self.adata
+        if return_copy:
+            return adata
+        else:
+            self.adata = adata
+            return
 
     # def rename_cluster(self, new_names):
     #     old_names = self.adata.obs['leiden']

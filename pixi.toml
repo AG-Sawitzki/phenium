@@ -29,8 +29,6 @@ cudnn = "*"
 cupy = ">13.6.0"
 cutensor = "*"
 cusparselt = "*"
-# dgl = "<=1.1.2,<=2.1.0" for STAMapper
-# fast_matrix_market = "==1.7.6"
 fastremap = "*"
 fill-voids = "*"
 geojson = "*"
@@ -43,7 +41,6 @@ pytorch-gpu = "*"
 rapids = { version = "26.*", channel = "rapidsai" }
 roifile = "*"
 rust = "==1.88.0"
-# scanpy = ">=1.9.1" for STAMapper
 shapely = "*"
 spatialdata = ">=0.6.0"
 squidpy = ">=1.8.0,<2"
@@ -52,7 +49,6 @@ tomlkit = "*"
 torchvision = "*"
 tqdm = "*"
 zarr = ">3"
-fastloess = ">=3.0.0,<4"
 
 [target.lida.pypi-dependencies]
 cellpose = "==4.2.1.1"

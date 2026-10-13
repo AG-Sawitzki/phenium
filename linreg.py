@@ -14,7 +14,6 @@ z = table['z_location'].to_numpy()[::100]
 
 res = stats.linregress(y, z)
 
-
 new_z = np.array([])
 
 for fov in set(table['fov_name']):
@@ -23,8 +22,6 @@ y_ = table_['y_location'].to_numpy()
 z_ = table_['z_location'].to_numpy()
 endog = z_ - (res.intercept + res.slope*max(y_))
 y_z = np.column_stack([y_, endog])
-# pred = model.fit_predict(y_z)
-# ax.scatter(y_, endog, s=1, c=pred, label=fov)
 new_z = np.concatenate([new_z, endog])
 
 y_z = np.column_stack(

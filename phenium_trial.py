@@ -14,17 +14,17 @@ import numpy as np
 import polars
 from phenium.main import Phenium
 obj = Phenium(
-    SRT_dir='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260716__161300__20260716_ITCAIM_lung-spleen_run1/output-XETG00410__0064733__spleen__20260716__161319',
-IHC_path='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260723_ITCAIM_Phenium_Slide2/Scan1/20260723_ITCAIM_Phenium_Slide2_Scan1.er.qptiff',
+    SRT_dir='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260827__133139__20260827_ITCAIM_lung-spleen_run4/output-XETG00410__0065619__non_infected_lung__20260827__133207',
+IHC_path='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260902_ITCAIM_Phenium_Slide8/Scan1/20260902_ITCAIM_Phenium_Slide8_Scan1.er.qptiff',
 output_dir='/data/cephfs-1/scratch/projects/sawitzki-phenium',
 config_path='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/phenium/config.toml',
 )
 
-obj.prepare(1, 16, quick=True, verbose=True, skip_affine=True)
+obj.prepare(0, 16, quick=True, verbose=True, skip_affine=True)
 
-# obj._run_proseg()
+obj._run_proseg()
 
-ctadata = obj.celltyping(resolution=0.025, rank_genes=False, gpu=False)
+obj.rank_genes(resolution=0.025)
 
 # table = obj.transcripts
 # table = polars.read_parquet(

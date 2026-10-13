@@ -127,7 +127,7 @@ def find_rois(
     )
 
     bboxes_to_keep = np.array(bboxes)[ids_to_keep]
-    bboxes_sorted = sorted(bboxes_to_keep, key=lambda k: [int(k[1]/100) + k[0]])
+    bboxes_sorted = sorted(bboxes_to_keep, key=lambda k: [int(k[1]/100), k[0]])
 
     return bboxes_sorted
 
@@ -459,7 +459,7 @@ def run_leiden(
     sc.pp.filter_cells(adata, min_genes=3)
     sc.pp.filter_genes(adata, min_cells=3)
 
-    sc.pp.normalize_total(adata, 1e4)
+    sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
 
     sc.tl.pca(adata, n_comps=100)
@@ -473,6 +473,6 @@ def run_leiden(
     else:
         sc.pp.neighbors(adata, n_neighbors=15, n_pcs=40)
         sc.tl.umap(adata)
-        sc.tl.leiden(adata, resolution=resolution)
+        sc.tl.leiden(adata, resolution=resolution, flavor='igraph', n_iterations=2)
 
     return adata
