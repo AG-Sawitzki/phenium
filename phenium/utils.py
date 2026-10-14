@@ -304,16 +304,17 @@ def boundaries_to_mask(
     masks = np.zeros(shape)
 
     for cell_id in set(table['cell_id']):
-        x = table[table['cell_id'] == cell_id]['vertex_x']
-        y = table[table['cell_id'] == cell_id]['vertex_y']
-        if len(x) >= 4 or len(y) >= 4:
-
+        table_at_ci = table.filter(pl.col('cell_id') == cell_id)
+        x = table_at_ci['vertex_x']
+        y = table_at_ci['vertex_y']
+        if len(x) >= 4 and len(y) >= 4:
             geometry = Polygon(zip(x,y))
             data.update({
                 cell_id : geometry
             })
+            polyline = np.array(list(geometry.exterior.coords))
             mask = np.zeros_like(masks, np.uint8)
-            cv2.fillPoly(mask, np.int32([geometry]), (1,1,1))
+            cv2.fillPoly(mask, np.int32(polyline), (1,1,1))
             masks[mask > 0] = cell_id
     
     return masks, data
@@ -414,7 +415,7 @@ def get_biomarkers(img_path):
                 idx = biomarker_paths.index(path)
                 element = root.find(path)
                 if element is not None and element.text:
-                    biomarkers[str(page_idx)] = element.text
+                    biomarkers[element.text] = page_idx
                     if idx > 0:
                         biomarker_paths.insert(
                             0,

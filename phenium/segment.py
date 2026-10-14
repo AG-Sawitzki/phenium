@@ -10,16 +10,7 @@ from cellpose import models
 
 
 def cellpose_wrapper(img, model_params, eval_params):
-    model = models.CellposeModel(**model_params)
-    # if style == 'pheno':
-    #     # load_as_zarr phenocycler for coords
-    #     pass
-    # elif style == 'focus':
-    #     # load_as_zarr morphology_focus for coords
-    #     pass
-    # else:
-    #     raise NotImplementedError(f'Style `{style}` is not implemented.')
-    
+    model = models.CellposeModel(**model_params)    
     masks, flows, styles = model.eval(img, **eval_params)
     return masks, flows, styles
 

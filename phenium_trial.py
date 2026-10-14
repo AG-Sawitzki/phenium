@@ -18,13 +18,14 @@ obj = Phenium(
 IHC_path='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260902_ITCAIM_Phenium_Slide8/Scan1/20260902_ITCAIM_Phenium_Slide8_Scan1.er.qptiff',
 output_dir='/data/cephfs-1/scratch/projects/sawitzki-phenium',
 config_path='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/phenium/config.toml',
+prior_type='XOA',
 )
 
-obj.prepare(0, 16, quick=True, verbose=True, skip_affine=True)
+obj.prepare(4, 16, quick=True, verbose=True, skip_affine=False)
 
 obj._run_proseg()
 
-obj.rank_genes(resolution=0.025)
+obj.rank_genes(resolution=0.175)
 
 # table = obj.transcripts
 # table = polars.read_parquet(

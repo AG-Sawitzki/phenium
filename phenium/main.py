@@ -27,12 +27,15 @@ from typing import Union, Tuple
 
 # import fast_matrix_market as fmm
 import anndata as ad
+import geopandas as gpd
 import numpy as np
 import polars as pl
 import scanpy as sc
 import squidpy as sq
 from scipy import stats
 from scipy.io import loadmat, mmread
+from shapely import transform
+from shapely.geometry import Point
 from skimage.transform import rescale
 import ants
 import ovrlpy
@@ -113,35 +116,9 @@ class IST:
 
         self.adjust_z()
 
-        # i don't like this
-        # arr = self.table.select(
-        #     pl.col('z_location')
-        # ).to_numpy()
-        # self.z_bounds = arr
-
-
     @property
     def fov_names(self):
         return list(set(self.table['fov_name']))
-
-    # @property
-    # def z_bounds(self):
-    #     return self._z_bounds
-
-    # @z_bounds.setter
-    # def z_bounds(self, arr):
-    #     diff = int(max(arr)-min(arr))
-    #     hist, edges = np.histogram(arr, bins=diff)
-    #     elems = 0
-    #     bins = []
-    #     bins_by_size = np.argsort(hist)[::-1]
-    #     for b in bins_by_size:
-    #         bins.append(b)
-    #         elems += hist[b]
-    #         if elems/len(arr) >= 0.9:
-    #             break
-
-    #     self._z_bounds = edges[min(bins)], edges[max(bins)+1]
 
     @property
     def roi(self):
@@ -198,6 +175,9 @@ class IST:
 
         z_density_argsort = np.argsort(z_density)[::-1]
 
+        # perhaps isolation forest is the better idea
+        # but what is a good contamination value?
+        # auto did exclude way too much...
         z_min = 0
         z_max = 0
         density_sum = 0
@@ -474,7 +454,7 @@ class Phenium:
         model_params = self.CP_params['model']
         eval_params = self.CP_params['eval']
         style = self.CP_params['style']
-        channels = self.CP_params['channels']
+        channels = tuple(self.CP_params['channels'])
 
         img = 0
 
@@ -487,12 +467,11 @@ class Phenium:
             img = np.dstack(imgs)
             img = np.moveaxis(img, -1, 0)
 
-        if img:
+        if (img != 0).any():
             masks, _, __ = cellpose_wrapper(
                 img,
                 model_params,
                 eval_params,
-                style,
             )
 
             self.prior_path = (
@@ -540,8 +519,6 @@ class Phenium:
             }
         )
 
-        if not skip_affine:
-            self._find_affine(quick=quick, verbose=verbose)
 
         if self.prior_type == 'CP':
             self._run_cellpose()
@@ -556,6 +533,9 @@ class Phenium:
             f' Priors set to {self.prior_type}.'
             f'\n Prior_path: {self.prior_path}'
         )
+        
+        if not skip_affine:
+            self._find_affine(quick=quick, verbose=verbose)
 
     def calculate_VSI(self, transcripts, plot=True, **kwargs):
         cdf = transcripts_for_ovrlpy(
@@ -619,15 +599,10 @@ class Phenium:
             self.prior_path
         )
 
-    # ... more functions
-
-    # def {function for running proseg, get_VSI, compare_VSI}
-    #   assign transcripts to layers
-    #
-    #   get_VSI and compare_VSI must be optional...
-    #   hence maybe separate into two functions
-
-    # ... more functions
+    # def {function for running proseg, get_VSI}
+        # indentify douplets and then investigate doublets
+        # to show that proseg resolves or doesn't resolve those
+        # doublets.
 
     def _load_counts(self):
         counts_path = self.output_dir / 'counts.mtx.gz'
@@ -794,22 +769,31 @@ class Phenium:
     #         ).astype('category')
     #     )
 
-    def make_sparse_array(self, shape, layers):
-        # it's not sparse rn. ik.
-        shape = shape + (layers,)
-        arr = np.zeros(shape)
-        return arr
+    def function_name(self, cellid_celltype_dict, prot_celltype_dict,):
+        ply_path = self.output_dir / 'cell-polygon-layers.geojson.gz'
+        gdf = gpd.read_file(
+            ply_path.as_uri().replace('file', 'gzip')
+        )
+        gdf['celltype'] = gdf.apply(
+            lambda row: cellid_celltype_dict[row.cell],
+            axis=1
+        )
+        c = len(self.IHC_img.biomarkers)
+        z = self.layers
+        y, x = self.SRT_img.shape[1:]
+        new_img = np.zeros((c, z, y, x))
+        for prot, celltypes in prot_celltype_dict:
+            for celltype in celltypes:
+                index = self.IHC_img.biomarkers[prot]
+                channel = self._transform_IHC_channel(self.IHC_img[index, :, :])
+                cells = gdf.loc[gdf.celltype == celltype]
+                coords = np.argswhere(channel > 0)
+                for coord in coords:
+                    point = transform(Point(coord), lambda x: x/self.SRT_img.pxsize[0])
+                    mask = cells.contains(point)
+                    if mask.any():
+                        layers = set(cells.loc[cells.loc[mask]]['layer'])
+                        new_value = channel[tuple(coord)]/len(layers)
+                        new_img[index, list(layers), coord] = new_value
 
-    # def assigne_cell(sparse_arr, plygn):
-        # for channel in channels
-            # cell_types = dict[channel] 
-            # cells = all_cell[cell_type in cell_types]
-            # 
-
-    # def assign_CT_probabilities():
-
-    # def assign_stain_to_CT():
-
-    # def assign_pixel_to_cell(): why is this here?
-
-    # def {function for running cluster_CellTypes, assign_CT, stain_to_Cell}
+            return new_img
