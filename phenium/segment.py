@@ -1,16 +1,14 @@
-from phenium.utils import (
-    to_cli
-)
-
 import multiprocessing as mp
 from functools import partial
 from subprocess import Popen
 
 from cellpose import models
 
+from phenium.utils import to_cli
+
 
 def cellpose_wrapper(img, model_params, eval_params):
-    model = models.CellposeModel(**model_params)    
+    model = models.CellposeModel(**model_params)
     masks, flows, styles = model.eval(img, **eval_params)
     return masks, flows, styles
 
@@ -89,5 +87,3 @@ def proseg_wrapper(
     print(cmd)
     p = Popen(cmd, shell=True)
     p.wait()
-
-    return None

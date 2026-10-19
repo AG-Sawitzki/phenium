@@ -1,33 +1,30 @@
-from phenium.exceptions import NotImplemented
-
 import os
-from math import sqrt
-from pathlib import Path
+import xml.etree.ElementTree as ET
+from functools import partial
 from itertools import product
+from math import sqrt
 from multiprocessing import cpu_count
 from multiprocessing.pool import Pool
-import xml.etree.ElementTree as ET
+from pathlib import Path, PosixPath
+from typing import Any, Dict, List, Tuple, Union, overload
 
-import numpy as np
-import polars as pl
-import geopandas as gpd
-import scanpy as sc
-import rapids_singlecell as rsc
-
-from PIL import Image, ImageDraw
-from shapely import Polygon
 # from ants import registration, apply_transforms
 # from scipy.io import loadmat
-
 import cupyx
-import scipy
 import cv2
+import geopandas as gpd
+import numpy as np
 import ovrlpy
+import polars as pl
+import rapids_singlecell as rsc
+import scanpy as sc
+import scipy
 import tifffile
-
-from typing import Any, Union, List, Tuple, Dict, overload
-from pathlib import PosixPath
 from numpy.typing import ArrayLike
+from PIL import Image, ImageDraw
+from shapely import Polygon
+
+from phenium.exceptions import NotImplemented
 
 
 def depth(
@@ -116,11 +113,11 @@ def find_rois(
     scores = []
     for c in contours:
         (x, y), (w, h), a = cv2.minAreaRect(c)
-        dim = w if h < w else h
+        dim = max(w, h)
         bboxes.append([x,y,dim,dim])
         scores.append(w*h)
 
-    scores_normed = list(map(lambda x: x/max(scores), scores))
+    scores_normed = [x/max(scores) for x in scores]
 
     ids_to_keep = cv2.dnn.NMSBoxes(
         bboxes,
@@ -155,7 +152,7 @@ def bboxes_to_sections(
     subres,
 ):
     """
-
+    Takes bounding boxes from cv2 and organizes the coordinates into a dictionary.
     """
     c, y, x = shape_org
     if isinstance(subres, tuple):
@@ -167,7 +164,7 @@ def bboxes_to_sections(
     rf_x = int(x/x_s)
     rf_y = int(y/y_s)
 
-    sections = dict()
+    sections = {}
 
     for section, bbox in enumerate(bboxes):
         x, y, w, h = bbox
@@ -177,7 +174,7 @@ def bboxes_to_sections(
         }
         if not isinstance(subres, tuple):
             cv2.rectangle(
-                marked_img, (int((x-w/2)), int(y-h/2)), (int(x+w/2), int(y+h/2)),
+                marked_img, (int(x-w/2), int(y-h/2)), (int(x+w/2), int(y+h/2)),
                 (255, 255, 255), 2
             )
             cv2.putText(
@@ -199,11 +196,11 @@ def bboxes_to_sections(
 
 
 def filter_by_location(
-    table: Union[pl.DataFrame, gpd.GeoDataFrame],
+    table: pl.DataFrame | gpd.GeoDataFrame,
     coords: dict,
-    z_bounds: tuple = None,
-    pixelsize: float = None,
-) -> Union[pl.DataFrame, gpd.GeoDataFrame]:
+    z_bounds: tuple | None = None,
+    pixelsize: float | None = None,
+) -> pl.DataFrame | gpd.GeoDataFrame:
     """
     Keep entries in `table` that have coordinates in `coords`.
     `coords` and `table` do not have the same units add `pixelsize`.
@@ -228,7 +225,7 @@ def filter_by_location(
     -------
         out : polars or geopandas dataframe
             Same table as input, excluding all entries with coordinates not in
-                `coords` 
+                `coords`
                 & `z_bounds`.
     """
     assert depth(coords) == 1, \
@@ -296,11 +293,32 @@ def filter_by_location(
     return table
 
 
+def draw_mask(
+    table,
+    cell_ids,
+    masks,
+    pxsize,
+    idx,
+):
+    cell_id = cell_ids[idx]
+    table_cid = table.filter(pl.col('cell_id') == cell_id)
+    x = table_cid.select(pl.col('vertex_x')).to_numpy().ravel()
+    y = table_cid.select(pl.col('vertex_y')).to_numpy().ravel()
+    px_x = np.int32(x/pxsize[0])
+    px_y = np.int32(y/pxsize[1])
+    polyline = list(zip(px_x, px_y))
+    img = Image.new('1', masks.shape, 0)
+    ImageDraw.Draw(img).polygon(polyline, outline=1, fill=1, width=1)
+    masks[np.array(img)] = idx
+
+    return masks
+
+
 def boundaries_to_mask(
     table: pl.DataFrame,
     shape: tuple,
     pxsize: tuple,
-) -> Union[ArrayLike, Dict]:
+) -> ArrayLike | dict:
     """
     ...
 
@@ -313,42 +331,21 @@ def boundaries_to_mask(
         pxsize : tuple
             tuple of size of a pixel in x, y direction
     """
-    data = dict()
     masks = np.zeros(shape[1:], dtype=np.uint64)
 
-    for n, cell_id in enumerate(set(table['cell_id'])):
-        print(cell_id)
-        table_at_ci = table.filter(pl.col('cell_id') == cell_id)
-        x = table_at_ci.select(pl.col('vertex_x')).to_numpy().ravel()
-        y = table_at_ci.select(pl.col('vertex_y')).to_numpy().ravel()
-        if len(x) >= 4 and len(y) >= 4:
-            geometry = Polygon(zip(x,y))
-            data.update({
-                cell_id : geometry
-            })
-            del geometry
-
-            px_x = np.int32(x/pxsize[0])
-            px_y = np.int32(y/pxsize[1])
-            polyline = list(zip(px_x, px_y))
-            # mask = np.zeros_like(masks, np.uint8)
-            img = Image.new('1', shape[1:], 0)
-            # try:
-            #     ImageDraw.Draw(img).polygon(polyline, outline=1, fill=1)
-            #     print('worked')
-            # except:
-            ImageDraw.Draw(img).polygon(polyline, outline=1, fill=1, width=1)
-            # cv2.fillPoly(mask, np.int32(polyline), (1,1,1))
-            masks[np.array(img)] = n
-            del img
-        del table_at_ci
-
-    return masks, data
+    cell_ids = set(table.select(pl.col('cell_id')))
+    idxs = np.arange(len(cell_ids))
+    with Pool(processes=cpu_count()) as pool:
+        pool.map(
+            partial(draw_mask, table, cell_ids, masks, pxsize,),
+            idxs
+        )
+    return masks
 
 
 def transcripts_for_ovrlpy(
     machine: str,
-    transcripts: Union[pl.DataFrame, os.PathLike, PosixPath],
+    transcripts: pl.DataFrame | os.PathLike | PosixPath,
 ) -> pl.DataFrame:
     """
     Rename the columns and filter the genes. Prepares the table for `ovrlpy`.
@@ -382,8 +379,8 @@ def transcripts_for_ovrlpy(
 
 
 def get_pixel_size(
-    img_path: Union[str, os.PathLike, PosixPath]
-) -> Tuple[float, float, float]:
+    img_path: str | os.PathLike | PosixPath
+) -> tuple[float, float, float]:
     """
     Get pixel size from xml metadata of (OME)Tiff.
     Returns `-1` for nonexisting Physical Sizes.
@@ -407,7 +404,7 @@ def get_pixel_size(
         px_size_X = pixels.get('PhysicalSizeX')
         px_size_Y = pixels.get('PhysicalSizeY', default=px_size_X)
         px_size_Z = pixels.get('PhysicalSizeZ', default=-1)
-    elif isinstance(pixels, type(None)):
+    elif pixels is None:
         px_size_X = tags[282].value[1]/tags[282].value[0]*1e4
         px_size_Y = tags[283].value[1]/tags[283].value[0]*1e4
         px_size_Z = -1
@@ -423,7 +420,7 @@ def get_biomarkers(img_path):
         pages = tif.series[0].pages
 
     biomarkers = {}
-    
+
     biomarker_paths = [
         './/Biomarker',
         './/BioMarker',
@@ -470,7 +467,7 @@ def run_leiden(
         gpu : bool, optional
             `True` if a gpu is avaiable and should be used
             `False` if not. Default is `False`
-    
+
     Returns
     -------
         out : anndata

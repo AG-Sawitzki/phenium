@@ -1,48 +1,34 @@
-from phenium.exceptions import (
-    NotImplemented
-)
-from phenium.segment import (
-    cellpose_wrapper,
-    proseg_wrapper
-)
-from phenium.utils import (
-    find_rois,
-    bboxes_to_sections,
-    filter_by_location,
-    boundaries_to_mask,
-    transcripts_for_ovrlpy,
-    get_pixel_size,
-    get_biomarkers,
-    run_leiden,
-)
-
 import json
-import multiprocessing as mp
-import os
-from pathlib import (
-    PosixPath,
-    Path
-)
-from typing import Union, Tuple
+from pathlib import Path, PurePath
 
 import anndata as ad
+import ants
 import geopandas as gpd
 import numpy as np
+import ovrlpy
 import polars as pl
 import scanpy as sc
 import squidpy as sq
-
+import tifffile
+import tomlkit
+import zarr
 from scipy import stats
 from scipy.io import loadmat, mmread
 from shapely import transform
 from shapely.geometry import Point
 from skimage.transform import rescale
 
-import ants
-import ovrlpy
-import tifffile
-import tomlkit
-import zarr
+from phenium.segment import cellpose_wrapper, proseg_wrapper
+from phenium.utils import (
+    bboxes_to_sections,
+    boundaries_to_mask,
+    filter_by_location,
+    find_rois,
+    get_biomarkers,
+    get_pixel_size,
+    run_leiden,
+    transcripts_for_ovrlpy,
+)
 
 
 class IMG:
@@ -81,17 +67,22 @@ class IMG:
         x = coords['x']
         y = coords['y']
         self._roi = self.zrr['0'][:, y[0]:y[1], x[0]:x[1]]
-        ...
 
     @property
     def biomarkers(self):
-        if self.path.suffix() == 'qptiff':
+        if self.path.suffix == 'qptiff':
             biomarkers = get_biomarkers(self.path)
         else:
             biomarkers = {}
-        
+
         return biomarkers
 
+    # def make_feature_matrix(self,):
+        # run cellpose and apply masks
+        # or masks from XOA or ProSeg
+        # on image to get sparse matrix
+        # of prot-read-out
+        # and then construct an anndata object
 
 class IST:
     """
@@ -209,7 +200,7 @@ class IST:
         table = table.with_columns(
             pl.col('z_location') - z_min
         )
-        
+
         z = table.select('z_location').to_numpy()
         self.z_bounds = (z.min(), z.max())
 
@@ -226,11 +217,11 @@ class Phenium:
 
     Parameters
     ----------
-        SRT_dir : 
+        SRT_dir :
             ...
-        IHC_path : 
+        IHC_path :
             ...
-        output_dir : 
+        output_dir :
             ...
         config_path :
             ...
@@ -257,19 +248,19 @@ class Phenium:
     """
     def __init__(
         self,
-        SRT_dir: Union[str, PosixPath],
-        IHC_path: Union[str, PosixPath],
-        output_dir: Union[str, PosixPath],
-        config_path: Union[str, PosixPath],
+        SRT_dir: str | PurePath,
+        IHC_path: str | PurePath,
+        output_dir: str | PurePath,
+        config_path: str | PurePath,
         machine: str = 'xenium',
         prior_type: str = '',
         cell_size: int = 5,
-        seed: int = None,
+        seed: int| None = None,
     )-> None:
         self.SRT_dir = Path(SRT_dir)
         self.IHC_path = Path(IHC_path)
         self.output_dir = Path(output_dir)
-    
+
         Path(self.output_dir / 'plots/').mkdir(parents=False, exist_ok=True)
 
         with open(config_path) as f:
@@ -304,8 +295,6 @@ class Phenium:
             f'Review marked images in {self.output_dir}.'
         )
 
-        return None
-
     @property
     def prior_path(self):
         try:
@@ -314,7 +303,7 @@ class Phenium:
             return ''
 
     @prior_path.setter
-    def prior_path(self, path: Union[str, PosixPath]):
+    def prior_path(self, path: str | PurePath):
         self._prior_path = path
 
     @property
@@ -423,7 +412,7 @@ class Phenium:
         img = self.IHC_img.roi[channel, :, :]
         img = rescale(
             img,
-            self.scalgin_factor,
+            self.scaling_factor,
             preserve_range=True
         )
         img = np.flip(img)
@@ -441,12 +430,12 @@ class Phenium:
         table = pl.read_parquet(path)
         table = self.filter_for_section(table)
         print(table.head(n=5))
-        masks, polygons = boundaries_to_mask(
+        masks = boundaries_to_mask(
             table,
             self.SRT_img.roi.shape,
             self.SRT_img.pxsize)
 
-        self.prior_path = (
+        self.prior_path = Path(
             self.output_dir / f'XOA_masks_{self.SRT_section}.npy'
         )
 
@@ -455,8 +444,8 @@ class Phenium:
             masks,
             allow_pickle=True
         )
-        with open(self.output_dir / f'XOA_polygons_{self.SRT_section}.json') as f:
-            json.dump(f, polygons)
+        # with open(self.output_dir / f'XOA_polygons_{self.SRT_section}.json') as f:
+        #     json.dump(f, polygons)
 
     def _run_cellpose(self):
         model_params = self.CP_params['model']
@@ -482,7 +471,7 @@ class Phenium:
                 eval_params,
             )
 
-            self.prior_path = (
+            self.prior_path = Path(
                 self.output_dir / f'CP_masks_{style}_{self.SRT_section}.npy'
             )
 
@@ -541,7 +530,7 @@ class Phenium:
             f' Priors set to {self.prior_type}.'
             f'\n Prior_path: {self.prior_path}'
         )
-        
+
         if not skip_affine:
             self.find_affine(quick=quick, verbose=verbose)
 
@@ -584,12 +573,12 @@ class Phenium:
                 signal_threshold=4,
             )
             fig.savefig(
-                self.output_path / 'plots/signal_integrity_map.pdf'
+                self.output_dir / 'plots/signal_integrity_map.pdf'
             )
 
             fig = ovrlpy.plot_pseudocells(ovrlpy_dataset)
             fig.savefig(
-                self.output_path / 'plots/pseudocells.pdf'
+                self.output_dir / 'plots/pseudocells.pdf'
             )
 
         return ovrlpy_dataset.integrity_map, ovrlpy_dataset.signal_map
@@ -710,7 +699,7 @@ class Phenium:
                     }
                 ).sort('pvals')
                 temp_pdf_list.append(temp_pdf.filter(
-                    (pl.col('pvals') < 0.01)
+                    pl.col('pvals') < 0.01
                 ))
             pdf = pl.concat(temp_pdf_list)
             pdf.write_csv(self.output_dir / f'ranked_genes_r{resolution}.csv')
