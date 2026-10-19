@@ -1,3 +1,10 @@
+from phenium.exceptions import (
+    NotImplemented
+)
+from phenium.segment import (
+    cellpose_wrapper,
+    proseg_wrapper
+)
 from phenium.utils import (
     find_rois,
     bboxes_to_sections,
@@ -8,35 +15,29 @@ from phenium.utils import (
     get_biomarkers,
     run_leiden,
 )
-from phenium.exceptions import (
-    NotImplemented
-)
-from phenium.segment import (
-    cellpose_wrapper,
-    proseg_wrapper
-)
 
+import json
 import multiprocessing as mp
 import os
-import json
 from pathlib import (
     PosixPath,
     Path
 )
 from typing import Union, Tuple
 
-# import fast_matrix_market as fmm
 import anndata as ad
 import geopandas as gpd
 import numpy as np
 import polars as pl
 import scanpy as sc
 import squidpy as sq
+
 from scipy import stats
 from scipy.io import loadmat, mmread
 from shapely import transform
 from shapely.geometry import Point
 from skimage.transform import rescale
+
 import ants
 import ovrlpy
 import tifffile
@@ -47,7 +48,7 @@ import zarr
 class IMG:
     """
     multi-channel img
-    (c, y, x)
+    (c, y, x) or (c, z, y, x)
     """
     def __init__(
         self,
@@ -107,7 +108,7 @@ class IST:
                 )
             else:
                 raise NotImplementedError(
-                    f'Not yet implemented to read {suffix} files'
+                    f'Not yet implemented to read {suffix} files.'
                 )
         else:
             self.table = pl.read_parquet(
@@ -177,7 +178,7 @@ class IST:
 
         # perhaps isolation forest is the better idea
         # but what is a good contamination value?
-        # auto did exclude way too much...
+        # auto did exclude too much...
         z_min = 0
         z_max = 0
         density_sum = 0
@@ -237,7 +238,9 @@ class Phenium:
             xenium
         prior_type : str, optional
             none, cellpose, proseg
-        cell_size: int, optional
+        cell_size : int, optional
+            ...
+        seed : int, optional
             ...
 
     Attributes
@@ -250,6 +253,7 @@ class Phenium:
         IHC_section
         transcripts
         scaling_factor
+        seed
     """
     def __init__(
         self,
@@ -260,6 +264,7 @@ class Phenium:
         machine: str = 'xenium',
         prior_type: str = '',
         cell_size: int = 5,
+        seed: int = None,
     )-> None:
         self.SRT_dir = Path(SRT_dir)
         self.IHC_path = Path(IHC_path)
@@ -352,7 +357,7 @@ class Phenium:
     def IHC_section(self, IHC_section):
         self._IHC_section = IHC_section
 
-    def _filter_for_section(
+    def filter_for_section(
         self,
         table,
     ) -> pl.dataframe.frame.DataFrame:
@@ -366,7 +371,7 @@ class Phenium:
 
         return filtered_table
 
-    def _find_affine(
+    def find_affine(
         self,
         quick=False,
         verbose=False
@@ -414,7 +419,7 @@ class Phenium:
         self.affine_transform = Ah
         self.reg_fwd = reg['fwdtransforms']
 
-    def _transform_IHC_channel(self, channel):
+    def transform_IHC_channel(self, channel):
         img = self.IHC_img.roi[channel, :, :]
         img = rescale(
             img,
@@ -434,10 +439,13 @@ class Phenium:
     def _XOA_masks(self):
         path = self.SRT_dir / 'cell_boundaries.parquet'
         table = pl.read_parquet(path)
-        table = self._filter_for_section(table)
-        # shape = self.get_shape(section)
-        masks, polygons = boundaries_to_mask(table, self.SRT_img.roi.shape)
-        
+        table = self.filter_for_section(table)
+        print(table.head(n=5))
+        masks, polygons = boundaries_to_mask(
+            table,
+            self.SRT_img.roi.shape,
+            self.SRT_img.pxsize)
+
         self.prior_path = (
             self.output_dir / f'XOA_masks_{self.SRT_section}.npy'
         )
@@ -463,7 +471,7 @@ class Phenium:
         if style == 'pheno':
             imgs = []
             for c in channels:
-                imgs.append(self._transform_IHC_channel(c))
+                imgs.append(self.transform_IHC_channel(c))
             img = np.dstack(imgs)
             img = np.moveaxis(img, -1, 0)
 
@@ -535,7 +543,7 @@ class Phenium:
         )
         
         if not skip_affine:
-            self._find_affine(quick=quick, verbose=verbose)
+            self.find_affine(quick=quick, verbose=verbose)
 
     def calculate_VSI(self, transcripts, plot=True, **kwargs):
         cdf = transcripts_for_ovrlpy(
@@ -785,7 +793,7 @@ class Phenium:
         for prot, celltypes in prot_celltype_dict:
             for celltype in celltypes:
                 index = self.IHC_img.biomarkers[prot]
-                channel = self._transform_IHC_channel(self.IHC_img[index, :, :])
+                channel = self.transform_IHC_channel(self.IHC_img[index, :, :])
                 cells = gdf.loc[gdf.celltype == celltype]
                 coords = np.argswhere(channel > 0)
                 for coord in coords:

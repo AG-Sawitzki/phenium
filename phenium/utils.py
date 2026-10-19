@@ -13,9 +13,12 @@ import polars as pl
 import geopandas as gpd
 import scanpy as sc
 import rapids_singlecell as rsc
+
+from PIL import Image, ImageDraw
 from shapely import Polygon
 # from ants import registration, apply_transforms
 # from scipy.io import loadmat
+
 import cupyx
 import scipy
 import cv2
@@ -249,16 +252,16 @@ def filter_by_location(
                 var_min, var_max, closed='both'
             ))
             table = table.filter(expr)
-            print(axis, extremes)
-            print(table.shape)
+            # print(axis, extremes)
+            # print(table.shape)
         if z_bounds != None and 'z_location' in table.columns:
             z_low, z_high = z_bounds
             expr = ((pl.col('z_location')).is_between(
                 z_low, z_high, closed='both'
             ))
             table = table.filter(expr)
-            print(z_low, z_high)
-            print(table.shape)
+            # print(z_low, z_high)
+            # print(table.shape)
     elif isinstance(table, gpd.GeoDataFrame):
         x_min, x_max = coords['x']
         y_min, y_max = coords['y']
@@ -295,28 +298,51 @@ def filter_by_location(
 
 def boundaries_to_mask(
     table: pl.DataFrame,
-    shape: tuple
+    shape: tuple,
+    pxsize: tuple,
 ) -> Union[ArrayLike, Dict]:
     """
+    ...
 
+    Parameters
+    ----------
+        table : polars DataFrame
+            polars dataframe with `cell_id` and `vertex_(x,y)` columns
+        shape : tuple
+            shape of the resulting image
+        pxsize : tuple
+            tuple of size of a pixel in x, y direction
     """
     data = dict()
-    masks = np.zeros(shape)
+    masks = np.zeros(shape[1:], dtype=np.uint64)
 
-    for cell_id in set(table['cell_id']):
+    for n, cell_id in enumerate(set(table['cell_id'])):
+        print(cell_id)
         table_at_ci = table.filter(pl.col('cell_id') == cell_id)
-        x = table_at_ci['vertex_x']
-        y = table_at_ci['vertex_y']
+        x = table_at_ci.select(pl.col('vertex_x')).to_numpy().ravel()
+        y = table_at_ci.select(pl.col('vertex_y')).to_numpy().ravel()
         if len(x) >= 4 and len(y) >= 4:
             geometry = Polygon(zip(x,y))
             data.update({
                 cell_id : geometry
             })
-            polyline = np.array(list(geometry.exterior.coords))
-            mask = np.zeros_like(masks, np.uint8)
-            cv2.fillPoly(mask, np.int32(polyline), (1,1,1))
-            masks[mask > 0] = cell_id
-    
+            del geometry
+
+            px_x = np.int32(x/pxsize[0])
+            px_y = np.int32(y/pxsize[1])
+            polyline = list(zip(px_x, px_y))
+            # mask = np.zeros_like(masks, np.uint8)
+            img = Image.new('1', shape[1:], 0)
+            # try:
+            #     ImageDraw.Draw(img).polygon(polyline, outline=1, fill=1)
+            #     print('worked')
+            # except:
+            ImageDraw.Draw(img).polygon(polyline, outline=1, fill=1, width=1)
+            # cv2.fillPoly(mask, np.int32(polyline), (1,1,1))
+            masks[np.array(img)] = n
+            del img
+        del table_at_ci
+
     return masks, data
 
 

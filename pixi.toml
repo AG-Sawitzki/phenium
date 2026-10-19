@@ -49,6 +49,7 @@ tomlkit = "*"
 torchvision = "*"
 tqdm = "*"
 zarr = ">3"
+pillow = ">=12.3.0,<13"
 
 [target.lida.pypi-dependencies]
 cellpose = "==4.2.1.1"
