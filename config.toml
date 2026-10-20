@@ -120,6 +120,7 @@ diffusion-proposal-sigma-z = 0.2
 # or 'focus' for morphology_focus input.
 style = 'focus'
 # dapi and membrane channel-positions
+# or biomarker name
 channels = [0, 1]
 
 [cellpose.model]

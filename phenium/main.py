@@ -12,6 +12,7 @@ import squidpy as sq
 import tifffile
 import tomlkit
 import zarr
+from numpy.typing import ArrayLike
 from scipy import stats
 from scipy.io import loadmat, mmread
 from shapely import transform
@@ -42,8 +43,8 @@ class IMG:
     ):
         self.path = Path(path)
         store = tifffile.imread(self.path, aszarr=True)
-        self.zrr = zarr.open(store, mode='r')
-        self.shape = self.zrr['0'].shape
+        self.zrr = zarr.open(store, mode="r")
+        self.shape = self.zrr["0"].shape
         self.pxsize = get_pixel_size(self.path)
 
         subresolution_lvl = len(self.zrr)
@@ -59,23 +60,154 @@ class IMG:
 
     @property
     def roi(self):
-        return self._roi
+        try:
+            return self._roi_adj
+        except AttributeError:
+            return self._roi
 
     @roi.setter
-    def roi(self, section):
+    def roi(self, section,
+            # scaling_factor=None
+    ):
         coords = self.sections[section]
-        x = coords['x']
-        y = coords['y']
-        self._roi = self.zrr['0'][:, y[0]:y[1], x[0]:x[1]]
+        x = coords["x"]
+        y = coords["y"]
+        self._roi = self.zrr["0"][:, y[0] : y[1], x[0] : x[1]]
+        # if scaling_factor is not None:
+        #     self._roi = self.adjust(
+        #         self._roi,
+        #         scaling_factor
+        #     )
+
+    # @property
+    # def roi_adj(self):
+    #     if self._roi_adj:
+    #         return self._roi_adj
+    #     else:
+    #         return 0
+    
+    # @roi_adj.setter
+    # def roi_adj(self, arr):
+    #     self._roi_adj = arr
 
     @property
     def biomarkers(self):
-        if self.path.suffix == 'qptiff':
+        if self.path.suffix == "qptiff":
             biomarkers = get_biomarkers(self.path)
         else:
             biomarkers = {}
 
         return biomarkers
+
+    def find_affine(
+        self,
+        fixed,
+        scaling_factor,
+        quick=False,
+        verbose=False,
+        matrix=False,
+    ) -> None:
+        fixed = fixed[0, :, :]
+        moving = self.roi[0, :, :]
+        moving = rescale(
+            moving,
+            scaling_factor,
+            preserve_range=True,
+        )
+        moving = np.flip(moving)
+
+        fixed = np.uint32(fixed)
+        moving = np.uint32(moving)
+
+        static = ants.from_numpy(fixed)
+        moving = ants.from_numpy(moving)
+
+        if quick:
+            tof = "antsRegistrationSyNQuick[r]"
+        else:
+            tof = "antsRegistrationSyN[r]"
+
+        reg = ants.registration(
+            fixed=static,
+            moving=moving,
+            type_of_transform=tof,
+            verbose=verbose,
+        )
+
+        if matrix:
+            mat = loadmat(reg["fwdtransforms"][0])
+            keys = list(mat.keys())
+
+            dim = fixed.ndim
+            A = mat[keys[0]][: dim**2].reshape((dim, dim))
+            t = mat[keys[0]][dim**2 :]
+            c = mat[keys[1]]
+
+            w = t + c - np.dot(A, c)
+            Ah = np.identity(dim + 1)
+            Ah[:dim, :dim] = A
+            Ah[:dim, dim:] = w
+            self.affine_transform = Ah
+
+        self.reg_fwd = reg["fwdtransforms"]
+        self.reg_inv = reg["invtransforms"]
+
+    def adjust(
+        self,
+        img: ArrayLike | None = None,
+        scaling_factor: float | None = None,
+    ) -> None:
+        """
+        Adjusts the roi to fit the input image from `find_affine`.
+        Replaces `self.roi`.
+        """
+        if img is None:
+            img = self.roi
+        if scaling_factor is not None:
+            img = rescale(
+                img,
+                scaling_factor,
+                preserve_range=True,
+                channel_axis=0,
+            )
+        fixed = np.zeros_like(img)
+        fixed_ant = ants.from_numpy(fixed)
+        moving_ant = ants.from_numpy(img)
+        img = ants.apply_transforms(
+            fixed=fixed_ant,
+            moving=moving_ant,
+            transformlist=self.reg_fwd,
+            interpolator="nearestNeighbor",
+        )
+        self._roi_adj = img.numpy()
+
+    def segment(self, params):
+        model_params = params['model']
+        eval_params = params['eval']
+        channels = tuple(params['channels'])
+
+        if isinstance(channels, list(int)):
+            img = self.roi[channels, :, :]
+        elif isinstance(channels, list(str)):
+            idx = [self.biomarkers[c] for c in channels]
+            img = self.roi[idx, :, :]
+        else:
+            raise TypeError(
+                "`channels` in `params` has wrong type: \n"
+                f"\t {type(channels)}"
+            )
+
+        self.masks, _, __ = cellpose_wrapper(
+            img,
+            model_params,
+            eval_params,
+        )
+
+    # def make_feature_matrix(self, masks, cell_ids,):
+    #     cell_ids = sorted(cell_ids)
+    #     biomarkers = sorted(self.biomarkers.keys())
+    #     for cell_ids
+
 
     # def make_feature_matrix(self,):
         # run cellpose and apply masks
@@ -177,18 +309,14 @@ class IST:
             dens = z_density[z_idx]
             z_val = z_space[z_idx]
             density_sum += dens
+            if density_sum/sum(z_density) > 0.9:
+                break
+            z_min = min(z_min, z_val)
+            z_max = max(z_max, z_max)
             if z_min == 0:
                 z_min = z_val
             if z_max == 0:
                 z_max = z_val
-            if z_val < z_min:
-                z_min = z_val
-            elif z_max < z_val:
-                z_max = z_val
-            else:
-                continue
-            if density_sum/sum(z_density) > 0.9:
-                break
 
         expr = (
             pl.col('z_location').is_between(
@@ -360,71 +488,6 @@ class Phenium:
 
         return filtered_table
 
-    def find_affine(
-        self,
-        quick=False,
-        verbose=False
-    ) -> None:
-        SRT_img = self.SRT_img.roi[0, :, :]
-        IHC_img = self.IHC_img.roi[0, :, :]
-        IHC_img = rescale(
-            IHC_img,
-            self.scaling_factor,
-            preserve_range=True,
-        )
-        IHC_img = np.flip(IHC_img)
-
-        SRT_img = np.uint32(SRT_img)
-        IHC_img = np.uint32(IHC_img)
-
-        static = ants.from_numpy(SRT_img)
-        moving = ants.from_numpy(IHC_img)
-
-        if quick:
-            tof = 'antsRegistrationSyNQuick[r]'
-        else:
-            tof = 'antsRegistrationSyN[r]'
-
-        reg = ants.registration(
-            fixed=static,
-            moving=moving,
-            type_of_transform=tof,
-            verbose=verbose,
-        )
-
-        mat = loadmat(reg['fwdtransforms'][0])
-        keys = list(mat.keys())
-
-        dim = SRT_img.ndim
-        A = mat[keys[0]][:dim**2].reshape((dim, dim))
-        t = mat[keys[0]][dim**2:]
-        c = mat[keys[1]]
-
-        w = t + c - np.dot(A, c)
-        Ah = np.identity(dim+1)
-        Ah[:dim, :dim] = A
-        Ah[:dim, dim:] = w
-
-        self.affine_transform = Ah
-        self.reg_fwd = reg['fwdtransforms']
-
-    def transform_IHC_channel(self, channel):
-        img = self.IHC_img.roi[channel, :, :]
-        img = rescale(
-            img,
-            self.scaling_factor,
-            preserve_range=True
-        )
-        img = np.flip(img)
-        transformed_img = ants.apply_transforms(
-            fixed=self.SRT_img.roi[0],
-            moving=img,
-            transformlist=self.reg_fwd,
-            interpolator='nearestNeighbor',
-        )
-
-        return transformed_img
-
     def _XOA_masks(self):
         path = self.SRT_dir / 'cell_boundaries.parquet'
         table = pl.read_parquet(path)
@@ -446,40 +509,6 @@ class Phenium:
         )
         # with open(self.output_dir / f'XOA_polygons_{self.SRT_section}.json') as f:
         #     json.dump(f, polygons)
-
-    def _run_cellpose(self):
-        model_params = self.CP_params['model']
-        eval_params = self.CP_params['eval']
-        style = self.CP_params['style']
-        channels = tuple(self.CP_params['channels'])
-
-        img = 0
-
-        if style == 'focus':
-            img = self.SRT_img.roi[channels, :, :]
-        if style == 'pheno':
-            imgs = []
-            for c in channels:
-                imgs.append(self.transform_IHC_channel(c))
-            img = np.dstack(imgs)
-            img = np.moveaxis(img, -1, 0)
-
-        if (img != 0).any():
-            masks, _, __ = cellpose_wrapper(
-                img,
-                model_params,
-                eval_params,
-            )
-
-            self.prior_path = Path(
-                self.output_dir / f'CP_masks_{style}_{self.SRT_section}.npy'
-            )
-
-            np.save(
-                self.prior_path,
-                masks,
-                allow_pickle=True
-            )
 
     def prepare(
         self,
@@ -516,13 +545,10 @@ class Phenium:
             }
         )
 
-
         if self.prior_type == 'CP':
             self._run_cellpose()
-            # self.prior_path = self.output_dir / f'CP_masks_{SRT_section}.npy'
         elif self.prior_type == 'XOA':
             self._XOA_masks()
-            # self.prior_path = self.output_dir / f'XOA_masks_{SRT_section}.npy'
         else:
             self.prior_path = ''
 
@@ -766,7 +792,11 @@ class Phenium:
     #         ).astype('category')
     #     )
 
-    def function_name(self, cellid_celltype_dict, prot_celltype_dict,):
+    def function_name(
+        self,
+        cellid_celltype_dict,
+        prot_celltype_dict,
+    ):
         ply_path = self.output_dir / 'cell-polygon-layers.geojson.gz'
         gdf = gpd.read_file(
             ply_path.as_uri().replace('file', 'gzip')
@@ -782,7 +812,8 @@ class Phenium:
         for prot, celltypes in prot_celltype_dict:
             for celltype in celltypes:
                 index = self.IHC_img.biomarkers[prot]
-                channel = self.transform_IHC_channel(self.IHC_img[index, :, :])
+                channel = self.IHC_img.roi[index, :, :]
+                # channel = self.transform_IHC_channel(self.IHC_img[index, :, :])
                 cells = gdf.loc[gdf.celltype == celltype]
                 coords = np.argswhere(channel > 0)
                 for coord in coords:
@@ -791,6 +822,6 @@ class Phenium:
                     if mask.any():
                         layers = set(cells.loc[cells.loc[mask]]['layer'])
                         new_value = channel[tuple(coord)]/len(layers)
-                        new_img[index, list(layers), coord] = new_value
+                        new_img[index, tuple(layers), coord] = new_value
 
             return new_img

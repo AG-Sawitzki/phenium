@@ -5,8 +5,8 @@ from itertools import product
 from math import sqrt
 from multiprocessing import cpu_count
 from multiprocessing.pool import Pool
-from pathlib import Path, PosixPath
-from typing import Any, Dict, List, Tuple, Union, overload
+from pathlib import PurePath
+from typing import overload
 
 # from ants import registration, apply_transforms
 # from scipy.io import loadmat
@@ -20,6 +20,7 @@ import rapids_singlecell as rsc
 import scanpy as sc
 import scipy
 import tifffile
+import tqdm
 from numpy.typing import ArrayLike
 from PIL import Image, ImageDraw
 from shapely import Polygon
@@ -36,7 +37,7 @@ def depth(
 
 
 def to_cli(
-    tup: Tuple[str, bool | int | float | str],
+    tup: tuple[str, bool | int | float | str],
     prefix: str = '',
     suffix: str = ''
 ) -> str:
@@ -112,7 +113,7 @@ def find_rois(
     bboxes = []
     scores = []
     for c in contours:
-        (x, y), (w, h), a = cv2.minAreaRect(c)
+        (x, y), (w, h), _a = cv2.minAreaRect(c)
         dim = max(w, h)
         bboxes.append([x,y,dim,dim])
         scores.append(w*h)
@@ -134,17 +135,17 @@ def find_rois(
 
 @overload
 def bboxes_to_sections(
-    bboxes: List[ArrayLike],
-    shape_org: Tuple,
-    subres: Tuple,
+    bboxes: list[ArrayLike],
+    shape_org: tuple,
+    subres: tuple,
 ) -> dict:
     pass
 @overload
 def bboxes_to_sections(
-    bboxes: List[ArrayLike],
-    shape_org: Tuple,
+    bboxes: list[ArrayLike],
+    shape_org: tuple,
     subres: ArrayLike,
-) -> Tuple[dict, ArrayLike]:
+) -> tuple[dict, ArrayLike]:
     pass
 def bboxes_to_sections(
     bboxes,
@@ -154,9 +155,9 @@ def bboxes_to_sections(
     """
     Takes bounding boxes from cv2 and organizes the coordinates into a dictionary.
     """
-    c, y, x = shape_org
+    _c, y, x = shape_org
     if isinstance(subres, tuple):
-        c_s, y_s, x_s = subres
+        _c_s, y_s, x_s = subres
     else:
         marked_img = np.uint8(subres[0, ...]).copy()
         y_s, x_s = marked_img.shape
@@ -293,12 +294,12 @@ def filter_by_location(
     return table
 
 
-def draw_mask(
+def _draw_mask(
+    idx,
     table,
     cell_ids,
     masks,
     pxsize,
-    idx,
 ):
     cell_id = cell_ids[idx]
     table_cid = table.filter(pl.col('cell_id') == cell_id)
@@ -333,19 +334,32 @@ def boundaries_to_mask(
     """
     masks = np.zeros(shape[1:], dtype=np.uint64)
 
-    cell_ids = set(table.select(pl.col('cell_id')))
-    idxs = np.arange(len(cell_ids))
-    with Pool(processes=cpu_count()) as pool:
-        pool.map(
-            partial(draw_mask, table, cell_ids, masks, pxsize,),
-            idxs
+    unique_ids = table.select(pl.col('cell_id')).unique()
+    cell_ids = [row["cell_id"] for row in unique_ids.iter_rows(named=True)]
+    cell_ids = sorted(cell_ids)
+
+    with Pool(processes=int(cpu_count()/2)) as pool:
+        res = pool.imap_unordered(
+            partial(
+                _draw_mask,
+                table=table,
+                cell_ids=cell_ids,
+                masks=masks,
+                pxsize=pxsize,
+            ),
+            range(len(cell_ids)),
+            chunksize=5,
         )
+        pool.close()
+        pool.join()
+    print(res)
+    print(sum(sum(masks)))
     return masks
 
 
 def transcripts_for_ovrlpy(
     machine: str,
-    transcripts: pl.DataFrame | os.PathLike | PosixPath,
+    transcripts: pl.DataFrame | os.PathLike | PurePath,
 ) -> pl.DataFrame:
     """
     Rename the columns and filter the genes. Prepares the table for `ovrlpy`.
@@ -379,7 +393,7 @@ def transcripts_for_ovrlpy(
 
 
 def get_pixel_size(
-    img_path: str | os.PathLike | PosixPath
+    img_path: str | os.PathLike | PurePath
 ) -> tuple[float, float, float]:
     """
     Get pixel size from xml metadata of (OME)Tiff.
@@ -387,7 +401,7 @@ def get_pixel_size(
 
     Parameters
     ----------
-        img_path : str, os.PathLike, PosixPath
+        img_path : str, os.PathLike, PurePath
             Path to a *tiff img.
 
     Returns
