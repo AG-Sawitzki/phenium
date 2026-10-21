@@ -16,7 +16,8 @@ import geopandas as gpd
 import numpy as np
 import ovrlpy
 import polars as pl
-import rapids_singlecell as rsc
+
+# import rapids_singlecell as rsc
 import scanpy as sc
 import scipy
 import tifffile
@@ -34,6 +35,24 @@ def depth(
     if isinstance(d, dict):
         return 1 + (max(map(depth, d.values())) if d else 0)
     return 0
+
+
+def chunk_size(var: int, chunks: int) -> int:
+    """Calculate the size of a chunk of a region.
+
+    Parameters
+    ----------
+        var : int
+            Total region width or height.
+        chunks : int
+            Total numbr of chunks.
+
+    Returns
+    -------
+        out : int
+            Width or Height of chunk.
+    """
+    return int(var * np.sqrt(chunks) / chunks)
 
 
 def to_cli(
@@ -338,21 +357,30 @@ def boundaries_to_mask(
     cell_ids = [row["cell_id"] for row in unique_ids.iter_rows(named=True)]
     cell_ids = sorted(cell_ids)
 
-    with Pool(processes=int(cpu_count()/2)) as pool:
-        res = pool.imap_unordered(
-            partial(
-                _draw_mask,
-                table=table,
-                cell_ids=cell_ids,
-                masks=masks,
-                pxsize=pxsize,
-            ),
-            range(len(cell_ids)),
-            chunksize=5,
+    for idx in tqdm.tqdm(range(len(cell_ids))):
+        masks = _draw_mask(
+            idx,
+            table,
+            cell_ids,
+            masks,
+            pxsize,
         )
-        pool.close()
-        pool.join()
-    print(res)
+
+    # pool = Pool(processes=int(cpu_count()/2))
+    # res = pool.imap_unordered(
+    #     partial(
+    #         _draw_mask,
+    #         table=table,
+    #         cell_ids=cell_ids,
+    #         masks=masks,
+    #         pxsize=pxsize,
+    #     ),
+    #     range(len(cell_ids)),
+    #     chunksize=5,
+    # )
+    # pool.close()
+    # pool.join()
+    # print(res)
     print(sum(sum(masks)))
     return masks
 
@@ -430,7 +458,7 @@ def get_pixel_size(
 
 def get_biomarkers(img_path):
     # function written based on grenkoca/qptifffile.
-    with tifffile.TiffFifle(img_path) as tif:
+    with tifffile.TiffFile(img_path) as tif:
         pages = tif.series[0].pages
 
     biomarkers = {}
@@ -502,15 +530,15 @@ def run_leiden(
 
     sc.tl.pca(adata, n_comps=100)
 
-    if gpu:
-        rsc.get.anndata_to_GPU(adata, convert_all=True)
-        rsc.pp.neighbors(adata, n_neighbors=15, n_pcs=40)
-        rsc.tl.umap(adata)
-        rsc.tl.leiden(adata, resolution=resolution)
-        rsc.get.anndata_to_CPU(adata, convert_all=True)
-    else:
-        sc.pp.neighbors(adata, n_neighbors=15, n_pcs=40)
-        sc.tl.umap(adata)
-        sc.tl.leiden(adata, resolution=resolution, flavor='igraph', n_iterations=2)
+    # if gpu:
+    #     rsc.get.anndata_to_GPU(adata, convert_all=True)
+    #     rsc.pp.neighbors(adata, n_neighbors=15, n_pcs=40)
+    #     rsc.tl.umap(adata)
+    #     rsc.tl.leiden(adata, resolution=resolution)
+    #     rsc.get.anndata_to_CPU(adata, convert_all=True)
+    # else:
+    sc.pp.neighbors(adata, n_neighbors=15, n_pcs=40)
+    sc.tl.umap(adata)
+    sc.tl.leiden(adata, resolution=resolution, flavor='igraph', n_iterations=2)
 
     return adata

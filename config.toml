@@ -122,6 +122,9 @@ style = 'focus'
 # dapi and membrane channel-positions
 # or biomarker name
 channels = [0, 1]
+# 
+# number of chunks to split the image into
+chunks = 4
 
 [cellpose.model]
 # consult cellpose/models.py#L104 for description of parameters
@@ -137,13 +140,13 @@ use_bfloat16 = true
 # consult cellpose/models.py#L163 for description of parameters
 batch_size = 64
 resample = true
-# channel_axis = morphology has only one channel; ZYX
-z_axis = 0
+channel_axis = 0 # morphology has only one channel; ZYX
+# z_axis = 0
 # rescale = original size is prefered
 # diameter = diameter unknown; original size is prefered
 # flow_threshold = 0.4; not used for 3D
 cellprob_threshold = 0.0
-do_3D = true
+do_3D = false
 flow3D_smooth = 0
 # anisotropy = turned off by default
 stitch_threshold = 0.0
@@ -157,7 +160,7 @@ tile_overlap = 0.1
 compute_masks = true
 # progress = # requires pyqt bar, which opens in external window
 [methods.cpsam.eval.normalize]
-norm3D = true
+norm3D = false
 
 
 # the below might be removed.

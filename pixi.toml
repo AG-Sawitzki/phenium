@@ -15,7 +15,7 @@ version = "2026.10.2a1"
 
 [constraints]
 numpy = ">=1.20.0"
-pandas = ">2.0,<3.0" 
+pandas = ">2.0,<3.0"
 
 [dependencies]
 python = ">=3.12"
@@ -34,11 +34,14 @@ fill-voids = "*"
 geojson = "*"
 geopandas = "*"
 imagecodecs = "*"
+pillow = ">=13,<14"
+polars = ">=1.38.1"
+polars-st = ">=0.11.0,<0.12"
 psutil = "*"
 pyqtgraph = "*"
 pyqt6 = "*"
 pytorch-gpu = "*"
-rapids = { version = "26.*", channel = "rapidsai" }
+# rapids = { version = "26.*", channel = "rapidsai" }
 roifile = "*"
 rust = "==1.88.0"
 shapely = "*"
@@ -49,13 +52,12 @@ tomlkit = "*"
 torchvision = "*"
 tqdm = "*"
 zarr = ">3"
-pillow = ">=12.3.0,<13"
 
 [target.lida.pypi-dependencies]
 cellpose = "==4.2.1.1"
 DINOv3 = { git = "https://github.com/facebookresearch/dinov3", rev = "6876159a11b4df116f30f667f8c9888617df0751" }
 microfilm = "<=0.3.0"
 opencv-python-headless = ">=4.13.0"
-ovrlpy = "*"
+ovrlpy = "==1.2.1"
 pyarrow = "*"
-rapids-singlecell-cu12 = { version = "*" }
+# rapids-singlecell-cu12 = { version = "*" }

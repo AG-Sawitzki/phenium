@@ -1,4 +1,7 @@
 import json
+from functools import partial
+from itertools import product
+from multiprocessing import Pool, cpu_count
 from pathlib import Path, PurePath
 
 import anndata as ad
@@ -11,6 +14,7 @@ import scanpy as sc
 import squidpy as sq
 import tifffile
 import tomlkit
+import tqdm
 import zarr
 from numpy.typing import ArrayLike
 from scipy import stats
@@ -23,6 +27,7 @@ from phenium.segment import cellpose_wrapper, proseg_wrapper
 from phenium.utils import (
     bboxes_to_sections,
     boundaries_to_mask,
+    chunk_size,
     filter_by_location,
     find_rois,
     get_biomarkers,
@@ -73,26 +78,10 @@ class IMG:
         x = coords["x"]
         y = coords["y"]
         self._roi = self.zrr["0"][:, y[0] : y[1], x[0] : x[1]]
-        # if scaling_factor is not None:
-        #     self._roi = self.adjust(
-        #         self._roi,
-        #         scaling_factor
-        #     )
-
-    # @property
-    # def roi_adj(self):
-    #     if self._roi_adj:
-    #         return self._roi_adj
-    #     else:
-    #         return 0
-    
-    # @roi_adj.setter
-    # def roi_adj(self, arr):
-    #     self._roi_adj = arr
 
     @property
     def biomarkers(self):
-        if self.path.suffix == "qptiff":
+        if self.path.suffix == ".qptiff":
             biomarkers = get_biomarkers(self.path)
         else:
             biomarkers = {}
@@ -101,16 +90,14 @@ class IMG:
 
     def find_affine(
         self,
-        fixed,
-        scaling_factor,
+        fixed: ArrayLike,
+        scaling_factor: float,
         quick=False,
         verbose=False,
         matrix=False,
     ) -> None:
-        fixed = fixed[0, :, :]
-        moving = self.roi[0, :, :]
         moving = rescale(
-            moving,
+            self.roi[0, :, :],
             scaling_factor,
             preserve_range=True,
         )
@@ -152,69 +139,185 @@ class IMG:
         self.reg_fwd = reg["fwdtransforms"]
         self.reg_inv = reg["invtransforms"]
 
+    def transform_channel(self, channel, fixed, scaling_factor):
+        if isinstance(channel, str):
+            channel = self.biomarkers[channel]
+
+        moving = self.roi[channel]
+        moving = rescale(
+            moving,
+            scaling_factor,
+            preserve_range=True,
+        )
+        fixed = np.int32(fixed)
+        moving = np.int32(moving)
+
+        fixed_ant = ants.from_numpy(fixed)
+        moving_ant = ants.from_numpy(moving)
+
+        moving_transformed = ants.apply_transforms(
+            fixed=fixed_ant,
+            moving=moving_ant,
+            transformlist=self.reg_fwd,
+            interpolator='nearestNeighbor',
+        )
+
+        return moving_transformed
+
     def adjust(
         self,
-        img: ArrayLike | None = None,
-        scaling_factor: float | None = None,
+        fixed: ArrayLike,
+        scaling_factor: float,
+        quick: bool = False,
+        verbose: bool = False,
+        parallelize: bool = False,
+        return_copy: bool = False,
     ) -> None:
         """
         Adjusts the roi to fit the input image from `find_affine`.
         Replaces `self.roi`.
         """
-        if img is None:
-            img = self.roi
-        if scaling_factor is not None:
-            img = rescale(
-                img,
-                scaling_factor,
-                preserve_range=True,
-                channel_axis=0,
+        self.find_affine(fixed, scaling_factor, quick, verbose)
+        imgs = []
+
+        if parallelize:
+            pool = Pool(processes=int(cpu_count()/2))
+            func = partial(
+                self.transform_channel,
+                fixed=fixed,
+                scaling_factor=scaling_factor,
             )
-        fixed = np.zeros_like(img)
-        fixed_ant = ants.from_numpy(fixed)
-        moving_ant = ants.from_numpy(img)
-        img = ants.apply_transforms(
-            fixed=fixed_ant,
-            moving=moving_ant,
-            transformlist=self.reg_fwd,
-            interpolator="nearestNeighbor",
-        )
-        self._roi_adj = img.numpy()
+            iterations = self.biomarkers.values()
+            if verbose:
+                res = list(tqdm.tqdm(
+                    pool.imap_unordered(func, iterations),
+                    total=len(iterations),
+                ))
+                pool.join()
+                pool.close()
+                print(res)
+                imgs.append(res)
+            else:
+                res = pool.imap_unordered(func,iterations)
+                pool.join()
+                pool.close()
+                print(res)
+                imgs = list(res)
+            print(imgs)
+        else:
+            if verbose:
+                pbar = tqdm.tqdm(total=len(self.biomarkers))
+            for channel in self.biomarkers.values():
+                img = self.transform_channel(
+                    channel=channel,
+                    fixed=fixed,
+                    scaling_factor=scaling_factor
+                )
+                # img_c = img[channel]
+                # if scaling_factor is not None:
+                #     img_c = rescale(
+                #         img_c,
+                #         scaling_factor,
+                #         preserve_range=True,
+                #     )
+                # fixed = np.int32(fixed)
+                # moving = np.int32(img_c)
+                # fixed_ant = ants.from_numpy(fixed)
+                # moving_ant = ants.from_numpy(moving)
+                # img_c = ants.apply_transforms(
+                #     fixed=fixed_ant,
+                #     moving=moving_ant,
+                #     transformlist=self.reg_fwd,
+                #     interpolator="nearestNeighbor",
+                # )
+                imgs.append(img.numpy())
+                if verbose:
+                    pbar.update(1)
+        if verbose:
+            pbar.close()
+            
+        imgs_stacked = np.dstack(imgs)
+        imgs_stacked_moved = np.moveaxis(imgs_stacked, -1, 0)
+        self._roi_adj = imgs_stacked_moved
+        if return_copy:
+            return imgs_stacked_moved
 
-    def segment(self, params):
-        model_params = params['model']
-        eval_params = params['eval']
+    def segment(
+        self,
+        params: dict | tomlkit.items.Table,
+        return_copy: bool = False
+    ):
         channels = tuple(params['channels'])
-
-        if isinstance(channels, list(int)):
-            img = self.roi[channels, :, :]
-        elif isinstance(channels, list(str)):
-            idx = [self.biomarkers[c] for c in channels]
-            img = self.roi[idx, :, :]
+        chunks = params['chunks']
+        eval_params = params['eval']
+        model_params = params['model']
+        
+        if isinstance(channels[0], int):
+            pass
+        elif isinstance(channels[0], str):
+            channels = tuple(
+                self.biomarkers[c] for c in channels
+            )
         else:
             raise TypeError(
                 "`channels` in `params` has wrong type: \n"
                 f"\t {type(channels)}"
             )
 
-        self.masks, _, __ = cellpose_wrapper(
-            img,
-            model_params,
-            eval_params,
+        _c, y, x = self.roi.shape
+
+        x_size = chunk_size(x, chunks)
+        y_size = chunk_size(y, chunks)
+
+        grid = product(
+            range(0, y-y % y_size, y_size),
+            range(0, x-x % x_size, x_size)
         )
 
-    # def make_feature_matrix(self, masks, cell_ids,):
-    #     cell_ids = sorted(cell_ids)
-    #     biomarkers = sorted(self.biomarkers.keys())
-    #     for cell_ids
+        all_masks = np.zeros(self.roi.shape[1:])
+
+        for chunk, (y_c, x_c) in enumerate(grid):
+            y_low = int(y_c*0.95)
+            y_high = int((y_c+y_size)*1.05)
+
+            x_low = int(x_c * 0.95)
+            x_high = int((x_c + x_size) * 1.05)
+
+            roi_chunk = self.roi[
+                channels, y_low:y_high, x_low:x_high
+            ]
+
+            masks, _, __ = cellpose_wrapper(
+                roi_chunk,
+                model_params,
+                eval_params,
+            )
+
+            all_masks[y_low:y_high, x_low:x_high] = masks
+
+        self.masks = all_masks
+        if return_copy:
+            return all_masks
+
+    def make_feature_matrix(self, masks,):
+        cell_ids = np.unique(masks, sorted=True)
+        feature_matrix = np.zeros((len(cell_ids), len(self.biomarkers)))
+        for cell_id in cell_ids:
+            loc = np.argwhere(self.masks == cell_id)
+            y_loc = tuple(loc[:, 0])
+            x_loc = tuple(loc[:, 1])
+            for channel in self.biomarkers.values():
+                val = np.sum(self.roi[channel, y_loc, x_loc])
+                feature_matrix[cell_id, channel] = val
+        self.feature_matrix = feature_matrix
+
+    def cluster(self, params, masks):
+        self.segment(params)
+        self.make_feature_matrix(masks)
 
 
-    # def make_feature_matrix(self,):
-        # run cellpose and apply masks
-        # or masks from XOA or ProSeg
-        # on image to get sparse matrix
-        # of prot-read-out
-        # and then construct an anndata object
+        
+
 
 class IST:
     """
@@ -515,8 +618,8 @@ class Phenium:
         SRT_section,
         IHC_section,
         skip_affine=False, # only for debug. remove later
-        quick=True,
-        verbose=True
+        quick=False,
+        verbose=False
     ):
         '''
         Prepare `Phenium` and the input for the Segmentation and Deconvolution.
@@ -545,20 +648,40 @@ class Phenium:
             }
         )
 
+        if not skip_affine:
+            self.IHC_img.adjust(
+                self.SRT_img.roi[0, :, :],
+                self.scaling_factor,
+                quick=quick,
+                verbose=verbose,
+                parallelize=True,
+            )
+
         if self.prior_type == 'CP':
-            self._run_cellpose()
+            style = self.CP_params['style']
+            if style == 'focus':
+                masks = self.SRT_img.segment(self.CP_params, return_copy=True)
+            elif style == 'pheno':
+                masks = self.IHC_img.segment(self.CP_params, return_copy=True)
+            else:
+                raise NotImplementedError(
+                    'Not implemented to segment on'
+                    f'{self.CP_params['style']}'
+                )
+            self.prior_path = Path(
+                self.output_dir / f"CP_masks_{self.SRT_section}_{style}.npy"
+            )
+            np.save(self.prior_path, masks, allow_pickle=True)
         elif self.prior_type == 'XOA':
             self._XOA_masks()
         else:
+            print('No or unknown prior.')
             self.prior_path = ''
 
         print(
             f' Priors set to {self.prior_type}.'
             f'\n Prior_path: {self.prior_path}'
         )
-
-        if not skip_affine:
-            self.find_affine(quick=quick, verbose=verbose)
 
     def calculate_VSI(self, transcripts, plot=True, **kwargs):
         cdf = transcripts_for_ovrlpy(
@@ -612,7 +735,6 @@ class Phenium:
     def _run_proseg(
         self,
     ) -> None:
-
         proseg_wrapper(
             self.PS_params,
             self.machine,
@@ -815,7 +937,7 @@ class Phenium:
                 channel = self.IHC_img.roi[index, :, :]
                 # channel = self.transform_IHC_channel(self.IHC_img[index, :, :])
                 cells = gdf.loc[gdf.celltype == celltype]
-                coords = np.argswhere(channel > 0)
+                coords = np.argwhere(channel > 0)
                 for coord in coords:
                     point = transform(Point(coord), lambda x: x/self.SRT_img.pxsize[0])
                     mask = cells.contains(point)
