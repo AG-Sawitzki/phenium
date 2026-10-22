@@ -42,6 +42,7 @@ pyqtgraph = "*"
 pyqt6 = "*"
 pytorch-gpu = "*"
 # rapids = { version = "26.*", channel = "rapidsai" }
+rich = "<=15.0.0"
 roifile = "*"
 rust = "==1.88.0"
 shapely = "*"

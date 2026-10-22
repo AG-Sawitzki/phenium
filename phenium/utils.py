@@ -1,25 +1,15 @@
 import os
 import xml.etree.ElementTree as ET
-from functools import partial
-from itertools import product
-from math import sqrt
 from multiprocessing import cpu_count
-from multiprocessing.pool import Pool
 from pathlib import PurePath
 from typing import overload
 
-# from ants import registration, apply_transforms
-# from scipy.io import loadmat
-import cupyx
 import cv2
 import geopandas as gpd
 import numpy as np
 import ovrlpy
 import polars as pl
-
-# import rapids_singlecell as rsc
 import scanpy as sc
-import scipy
 import tifffile
 import tqdm
 from numpy.typing import ArrayLike
@@ -215,6 +205,129 @@ def bboxes_to_sections(
         return sections, marked_img
 
 
+def scale_coords(coords, factor):
+    """
+    Scale the min/max values in `coords` by `factor`.
+
+    Parameters
+    ----------
+        coords : dict
+            Dictionary with keys 'x' & 'y' and values [min, max]
+        factor : float or tuple[float, ...]
+            Either a single factor for both or
+            each axis receives a separate factor.
+            Only the first two entries are used.
+            Order: x_factor, y_factor.
+    
+    Returns
+    -------
+        out : dict
+            A new dictionary with the old keys but values scaled by factor.
+    """
+    x = np.array(coords['x'])
+    y = np.array(coords['y'])
+    new_coords = {}
+
+    if isinstance(factor, tuple):
+        if len(factor) == 2:
+            x_factor, y_factor = factor
+        elif len(factor) >= 3:
+            x_factor, y_factor, _ = factor
+        else:
+            x_factor, y_factor = factor, factor
+    elif isinstance(factor, float):
+        x_factor, y_factor = factor, factor
+    else:
+        raise NotImplementedError('Unknown format of factor.')
+
+    new_coords['x'] = np.int32(x * x_factor).tolist()
+    new_coords['y'] = np.int32(y * y_factor).tolist()
+
+    return new_coords
+
+
+def relative(
+    table: pl.DataFrame | gpd.GeoDataFrame,
+    coords: dict,
+) -> pl.DataFrame | gpd.GeoDataFrame:
+    """
+    Turn absolute coordinates into ones relative to the section origin.
+
+    Parameters
+    ----------
+        table : polars or geopandas dataframe
+            Contains the coordinates to adjust.
+            Column with `vertex_` or `_location` for polars.
+            `geometry` column in GeoDataFrame.
+        coords : dict
+            Dictionary containing min. x,y and max. x,y.
+            For an example, see `gt_section.json`
+
+    Returns
+    -------
+        out : polars or geopandas dataframe
+            Same table as input, but with coordinates relative to section origin.
+    """
+    assert depth(coords) == 1, f"`coords` incorrect: {coords}\n Consult example .json!"
+    if isinstance(table, pl.DataFrame):
+        for axis, coord in coords.items():
+            column = next(
+                c
+                for c in table.columns
+                if (f"{axis}_location" in c or f"vertex_{axis}" in c)
+            )
+            var_min = min(coord)
+            relatived = table.select((pl.col(column)) - var_min)
+            table = table.update(relatived)
+    if isinstance(table, gpd.GeoDataFrame):
+        x_min = min(coords['x'])
+        y_min = min(coords['y'])
+        print('IN RELATIVE', table)
+        geometry = table['geometry'].transform(
+            lambda x: (x - np.array([x_min, y_min])).round(0)
+        )
+        table['geometry'] = geometry
+    return table
+
+
+def pixelate(
+    table: pl.DataFrame | gpd.GeoDataFrame,
+    pixelsize_xy: float,
+) -> pl.DataFrame | gpd.GeoDataFrame:
+    """
+    Transform coordinates in (geo)dataframe from length unit to pixelsize.
+
+    Assumes pixel have same length in x & y.
+
+    Parameters
+    ----------
+        table : polars or geopandas dataframe
+            Contains the coordinates to transform.
+            Column with `vertex_` or `_location` for polars.
+            `geometry` column in GeoDataFrame.
+        pixelsize_xy : float
+            Pixelsize of a pixel in xy plane.
+
+    Returns
+    -------
+        out : polars or geopandas dataframe
+            Same table as input, but with adjusted coordinates.
+    """
+    if isinstance(table, pl.DataFrame):
+        columns = [c for c in table.columns if ('vertex_' in c or '_location' in c)]
+        pixeled = table.select(
+            (pl.col(columns[0]) / pixelsize_xy).round(0),
+            (pl.col(columns[1]) / pixelsize_xy).round(0),
+        )
+        table = table.update(pixeled)
+    if isinstance(table, gpd.GeoDataFrame):
+        geometry = table['geometry'].transform(
+            lambda x: (x * np.array([1 / pixelsize_xy, 1 / pixelsize_xy])).round(0)
+        )
+        table['geometry'] = geometry
+    return table
+
+
 def filter_by_location(
     table: pl.DataFrame | gpd.GeoDataFrame,
     coords: dict,
@@ -263,7 +376,8 @@ def filter_by_location(
             elif f'vertex_{axis}' in table.columns:
                 column = f'vertex_{axis}'
             else:
-                column = 'x'
+                print(f'Setting col to {axis}')
+                column = axis
 
             expr = ((pl.col(column)).is_between(
                 var_min, var_max, closed='both'
@@ -354,7 +468,7 @@ def boundaries_to_mask(
     masks = np.zeros(shape[1:], dtype=np.uint64)
 
     unique_ids = table.select(pl.col('cell_id')).unique()
-    cell_ids = [row["cell_id"] for row in unique_ids.iter_rows(named=True)]
+    cell_ids = [row['cell_id'] for row in unique_ids.iter_rows(named=True)]
     cell_ids = sorted(cell_ids)
 
     for idx in tqdm.tqdm(range(len(cell_ids))):

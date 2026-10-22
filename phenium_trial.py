@@ -1,18 +1,19 @@
 from pathlib import Path
 
-import polars as pl
-import scanpy as sc
 import anndata as ad
-import rapids_singlecell as rsc
 import geopandas as gpd
-from shapely.geometry import Point
-from scipy.io import mmread
-from cupyx.scipy.sparse import csr_matrix
+
 # import spatialdata
+import polars as pl
+import rapids_singlecell as rsc
+import scanpy as sc
+from cupyx.scipy.sparse import csr_matrix
+from phenium.main import Phenium
+from scipy.io import mmread
+from shapely.geometry import Point
 
 import numpy as np
 import polars
-from phenium.main import Phenium
 obj = Phenium(
     SRT_dir='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260827__133139__20260827_ITCAIM_lung-spleen_run4/output-XETG00410__0065619__non_infected_lung__20260827__133207',
 IHC_path='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260902_ITCAIM_Phenium_Slide8/Scan1/20260902_ITCAIM_Phenium_Slide8_Scan1.er.qptiff',

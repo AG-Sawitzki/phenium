@@ -28,7 +28,7 @@ def proseg_wrapper(
             for arg, value in dic.items():
                 if arg == 'nthreads':
                     if not value:
-                        value = mp.cpu_count()
+                        value = int(mp.cpu_count()/2)
                 elif arg == 'voxel-layers':
                     if not value:
                         value = layers

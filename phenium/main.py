@@ -1,4 +1,3 @@
-import json
 from functools import partial
 from itertools import product
 from multiprocessing import Pool, cpu_count
@@ -8,7 +7,6 @@ import anndata as ad
 import ants
 import geopandas as gpd
 import numpy as np
-import ovrlpy
 import polars as pl
 import scanpy as sc
 import squidpy as sq
@@ -32,8 +30,9 @@ from phenium.utils import (
     find_rois,
     get_biomarkers,
     get_pixel_size,
+    relative,
     run_leiden,
-    transcripts_for_ovrlpy,
+    scale_coords,
 )
 
 
@@ -162,7 +161,10 @@ class IMG:
             interpolator='nearestNeighbor',
         )
 
-        return moving_transformed
+        try:
+            self._roi_adj[channel] = moving_transformed
+        except AttributeError:
+            return moving_transformed
 
     def adjust(
         self,
@@ -170,7 +172,6 @@ class IMG:
         scaling_factor: float,
         quick: bool = False,
         verbose: bool = False,
-        parallelize: bool = False,
         return_copy: bool = False,
     ) -> None:
         """
@@ -178,69 +179,51 @@ class IMG:
         Replaces `self.roi`.
         """
         self.find_affine(fixed, scaling_factor, quick, verbose)
-        imgs = []
 
-        if parallelize:
-            pool = Pool(processes=int(cpu_count()/2))
+        iterations = self.biomarkers.values()
+        self._roi_adj = np.zeros((len(iterations),)+fixed.shape)
+
+        if quick:
             func = partial(
                 self.transform_channel,
                 fixed=fixed,
                 scaling_factor=scaling_factor,
             )
-            iterations = self.biomarkers.values()
             if verbose:
-                res = list(tqdm.tqdm(
-                    pool.imap_unordered(func, iterations),
-                    total=len(iterations),
-                ))
-                pool.join()
+                # print(
+                #     'Combining verbose and parallel-processing does not work.'
+                # )
+                with Pool(processes=int(cpu_count()/2)) as pool:
+                    res = pool.imap_unordered(func,iterations)
                 pool.close()
+                pool.join()
                 print(res)
-                imgs.append(res)
             else:
-                res = pool.imap_unordered(func,iterations)
-                pool.join()
+                with Pool(processes=int(cpu_count()/2)) as pool:
+                    res = pool.imap_unordered(func,iterations)
                 pool.close()
+                pool.join()
                 print(res)
-                imgs = list(res)
-            print(imgs)
         else:
             if verbose:
-                pbar = tqdm.tqdm(total=len(self.biomarkers))
-            for channel in self.biomarkers.values():
-                img = self.transform_channel(
+                pbar = tqdm.tqdm(total=len(iterations))
+            for channel in iterations:
+                self.transform_channel(
                     channel=channel,
                     fixed=fixed,
                     scaling_factor=scaling_factor
                 )
-                # img_c = img[channel]
-                # if scaling_factor is not None:
-                #     img_c = rescale(
-                #         img_c,
-                #         scaling_factor,
-                #         preserve_range=True,
-                #     )
-                # fixed = np.int32(fixed)
-                # moving = np.int32(img_c)
-                # fixed_ant = ants.from_numpy(fixed)
-                # moving_ant = ants.from_numpy(moving)
-                # img_c = ants.apply_transforms(
-                #     fixed=fixed_ant,
-                #     moving=moving_ant,
-                #     transformlist=self.reg_fwd,
-                #     interpolator="nearestNeighbor",
-                # )
-                imgs.append(img.numpy())
                 if verbose:
                     pbar.update(1)
-        if verbose:
-            pbar.close()
+            if verbose:
+                pbar.close()
             
-        imgs_stacked = np.dstack(imgs)
-        imgs_stacked_moved = np.moveaxis(imgs_stacked, -1, 0)
-        self._roi_adj = imgs_stacked_moved
+        # imgs_stacked = np.dstack(imgs)
+        # imgs_stacked_moved = np.moveaxis(imgs_stacked, -1, 0)
+        # self._roi_adj = imgs_stacked_moved
         if return_copy:
-            return imgs_stacked_moved
+            # return imgs_stacked_moved
+            return self._roi_adj
 
     def segment(
         self,
@@ -353,11 +336,15 @@ class IST:
 
     @roi.setter
     def roi(self, coords,):
-        self._roi = filter_by_location(
+        new_coords = scale_coords(coords, self.pxsize)
+        table = filter_by_location(
             self.table,
-            coords,
+            new_coords,
             z_bounds=self.z_bounds,
-            pixelsize=self.pxsize
+        )
+        self._roi = relative(
+            table,
+            new_coords
         )
 
     def adjust_z(self, return_copy=False):
@@ -588,7 +575,6 @@ class Phenium:
             self.SRT_img.sections[self.SRT_section],
             pixelsize=self.SRT_img.pxsize[0]
         )
-
         return filtered_table
 
     def _XOA_masks(self):
@@ -637,24 +623,33 @@ class Phenium:
         self.SRT_img.roi = SRT_section
         self.IHC_img.roi = IHC_section
 
+        if verbose:
+            print('Filtering IST for section.')
         self.IST.roi = self.SRT_img.sections[SRT_section]
 
+        IST_path = Path(
+            self.output_dir / f'transcripts_{SRT_section}.parquet'
+        )
         self.IST.roi.write_parquet(
-            self.output_dir / f'transcripts_{SRT_section}.parquet',
-            compression='snappy',
+            IST_path,
+            compression="snappy",
             use_pyarrow=True,
             pyarrow_options={
-                'version' : '1.0',
-            }
+                "version": "1.0",
+            },
         )
+        if verbose:
+            print(f'Saved IST.roi at {IST_path}')
 
         if not skip_affine:
+            if verbose:
+                print('Adjusting IHC to be of same shape as SRT imgs')
+
             self.IHC_img.adjust(
                 self.SRT_img.roi[0, :, :],
                 self.scaling_factor,
                 quick=quick,
                 verbose=verbose,
-                parallelize=True,
             )
 
         if self.prior_type == 'CP':
@@ -683,54 +678,6 @@ class Phenium:
             f'\n Prior_path: {self.prior_path}'
         )
 
-    def calculate_VSI(self, transcripts, plot=True, **kwargs):
-        cdf = transcripts_for_ovrlpy(
-            machine=self.machine,
-            transcripts=transcripts,
-        )
-
-        ovrlpy_dataset = ovrlpy.Ovrlp(
-            cdf,
-            # KDE_bandwidth,
-            # min_distance,
-            # n_components,
-            # gene_key,
-            # coordinate_keys,
-            # n_workers,
-            # dtype,
-            # patch_length,
-            # umap_kwargs,
-            # cumap_kwargs,
-            # random_state,
-        )
-
-        # should be split into the processes
-        # to include all params for
-        # process_coordinates
-        # fit_transcripts
-        # compute_VSI
-        ovrlpy_dataset.analyse(
-            # gridsize,
-            # min_transcripts,
-            # genes,
-            # fit_umap,
-        )
-
-        if plot:
-            fig = ovrlpy.plot_signal_integrity(
-                ovrlpy_dataset,
-                signal_threshold=4,
-            )
-            fig.savefig(
-                self.output_dir / 'plots/signal_integrity_map.pdf'
-            )
-
-            fig = ovrlpy.plot_pseudocells(ovrlpy_dataset)
-            fig.savefig(
-                self.output_dir / 'plots/pseudocells.pdf'
-            )
-
-        return ovrlpy_dataset.integrity_map, ovrlpy_dataset.signal_map
 
     def _run_proseg(
         self,
