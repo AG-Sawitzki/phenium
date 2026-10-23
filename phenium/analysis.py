@@ -52,11 +52,11 @@ def ovrlpy_analysis(transcripts, machine, **kwargs):
     return ovrlpy_dataset
 
 
-def vis_doublets(ovrlpy_dataset, masks):
-    doublets = ovrlpy_dataset.detect_doublets(
-        min_signal=3,
-        integrity_sigma=2,
-    )
+def vis_doublets(doublets, masks):
+    # doublets = ovrlpy_dataset.detect_doublets(
+    #     min_signal=3,
+    #     integrity_sigma=2,
+    # )
 
     # compare masks and doublets
     stuff = {}
@@ -73,17 +73,17 @@ def vis_doublets(ovrlpy_dataset, masks):
 
     success_rate = len(stuff["double_cell"]) / len(doublets)
 
-    fig, ax = plt.subplots()
-    _scatter = ax.scatter(
-        doublets["x"],
-        doublets["y"],
-        c=doublets["integrity"],
-        s=0.5,
-        cmap="viridis",
-    )
+    # fig, ax = plt.subplots()
+    # _scatter = ax.scatter(
+    #     doublets["x"],
+    #     doublets["y"],
+    #     c=doublets["integrity"],
+    #     s=0.5,
+    #     cmap="viridis",
+    # )
 
-    _ = ax.set_aspect("equal")
-    _ = fig.colorbar(_scatter, ax=ax)
+    # _ = ax.set_aspect("equal")
+    # _ = fig.colorbar(_scatter, ax=ax)
 
     return success_rate
 

@@ -12,8 +12,10 @@ import scanpy as sc
 import squidpy as sq
 import tifffile
 import tomlkit
+import torch
 import tqdm
 import zarr
+from cellpose import models
 from numpy.typing import ArrayLike
 from scipy import stats
 from scipy.io import loadmat, mmread
@@ -190,9 +192,9 @@ class IMG:
                 scaling_factor=scaling_factor,
             )
             if verbose:
-                # print(
-                #     'Combining verbose and parallel-processing does not work.'
-                # )
+                print(
+                    'Combining verbose and parallel-processing does not work.'
+                )
                 with Pool(processes=int(cpu_count()/2)) as pool:
                     res = pool.imap_unordered(func,iterations)
                 pool.close()
@@ -227,13 +229,32 @@ class IMG:
 
     def segment(
         self,
-        params: dict | tomlkit.items.Table,
-        return_copy: bool = False
+        channels: list[int | str] | tuple[int | str],
+        chunks: int,
+        return_copy: bool = False,
+        # mkwargs,
+        # ekwargs
+        gpu=True,
+        pretrained_model='cpdino',
+        device='cuda:0',
+        use_bfloat16=True,
+        batch_size=8,
+        resample=True,
+        channel_axis=None,
+        cellprob_threshold=0.0,
+        do_3D=False,
+        flow3D_smooth=0,
+        stitch_threshold=0.0,
+        min_size=15,
+        max_size_fraction=0.4,
+        augment=False,
+        tile_overlap=0.1,
+        compute_masks=True
     ):
-        channels = tuple(params['channels'])
-        chunks = params['chunks']
-        eval_params = params['eval']
-        model_params = params['model']
+        # channels = tuple(params['channels'])
+        # chunks = params['chunks']
+        # eval_params = params['eval']
+        # model_params = params['model']
         
         if isinstance(channels[0], int):
             pass
@@ -257,8 +278,13 @@ class IMG:
             range(0, x-x % x_size, x_size)
         )
 
-        all_masks = np.zeros(self.roi.shape[1:])
-
+        all_masks = np.zeros((y, x))
+        model = models.CellposeModel(
+            gpu=gpu,
+            pretrained_model=pretrained_model,
+            device=torch.device(device),
+            use_bfloat16=use_bfloat16,
+        )
         for chunk, (y_c, x_c) in enumerate(grid):
             y_low = int(y_c*0.95)
             y_high = int((y_c+y_size)*1.05)
@@ -269,15 +295,27 @@ class IMG:
             roi_chunk = self.roi[
                 channels, y_low:y_high, x_low:x_high
             ]
-
-            masks, _, __ = cellpose_wrapper(
+            print(x_low, x_high)
+            print(y_low, y_high)
+            masks, _flows, _styles = model.eval(
                 roi_chunk,
-                model_params,
-                eval_params,
+                resample=resample,
+                channel_axis=channel_axis,
+                cellprob_threshold=cellprob_threshold,
+                do_3D=do_3D,
+                flow3D_smooth=flow3D_smooth,
+                stitch_threshold=stitch_threshold,
+                min_size=min_size,
+                max_size_fraction=max_size_fraction,
+                augment=augment,
+                tile_overlap=tile_overlap,
+                compute_masks=compute_masks,
             )
-
+            print(masks.shape)
+            print(masks.sum())
             all_masks[y_low:y_high, x_low:x_high] = masks
 
+        print(all_masks.sum())
         self.masks = all_masks
         if return_copy:
             return all_masks
@@ -286,6 +324,8 @@ class IMG:
         cell_ids = np.unique(masks, sorted=True)
         feature_matrix = np.zeros((len(cell_ids), len(self.biomarkers)))
         for cell_id in cell_ids:
+            if cell_id == 0:
+                continue
             loc = np.argwhere(self.masks == cell_id)
             y_loc = tuple(loc[:, 0])
             x_loc = tuple(loc[:, 1])
@@ -488,25 +528,25 @@ class Phenium:
         self.prior_type = prior_type
         self.cell_size = cell_size
 
-        self.SRT_img = IMG(
+        self.XMI = IMG(
             self.SRT_dir / 'morphology_focus/ch0000_dapi.ome.tif'
         )
         tifffile.imwrite(
             self.output_dir / 'SRT_overview.png',
-            self.SRT_img.overview
+            self.XMI.overview
         )
 
-        self.IHC_img = IMG(self.IHC_path)
+        self.IHC = IMG(self.IHC_path)
         tifffile.imwrite(
             self.output_dir / 'IHC_overview.png',
-            self.IHC_img.overview
+            self.IHC.overview
         )
 
         self.scaling_factor = (
-            self.IHC_img.pxsize[0] / self.SRT_img.pxsize[0]
+            self.IHC.pxsize[0] / self.XMI.pxsize[0]
         )
 
-        self.IST = IST(self.SRT_dir, self.SRT_img.pxsize[0])
+        self.IST = IST(self.SRT_dir, self.XMI.pxsize[0])
 
         print(
             f'Initialized. \n'
@@ -572,8 +612,8 @@ class Phenium:
         # currently only transcripts are passed...
         filtered_table = filter_by_location(
             table,
-            self.SRT_img.sections[self.SRT_section],
-            pixelsize=self.SRT_img.pxsize[0]
+            self.XMI.sections[self.SRT_section],
+            pixelsize=self.XMI.pxsize[0]
         )
         return filtered_table
 
@@ -584,8 +624,8 @@ class Phenium:
         print(table.head(n=5))
         masks = boundaries_to_mask(
             table,
-            self.SRT_img.roi.shape,
-            self.SRT_img.pxsize)
+            self.XMI.roi.shape,
+            self.XMI.pxsize)
 
         self.prior_path = Path(
             self.output_dir / f'XOA_masks_{self.SRT_section}.npy'
@@ -611,21 +651,21 @@ class Phenium:
         Prepare `Phenium` and the input for the Segmentation and Deconvolution.
         '''
         if (
-            (SRT_section in self.SRT_img.sections)
+            (SRT_section in self.XMI.sections)
             and
-            (IHC_section in self.IHC_img.sections)
+            (IHC_section in self.IHC.sections)
         ):
             self.SRT_section = SRT_section
             self.IHC_section = IHC_section
         else:
             raise KeyError(f'This section (`{SRT_section}`) does not exist.')
 
-        self.SRT_img.roi = SRT_section
-        self.IHC_img.roi = IHC_section
+        self.XMI.roi = SRT_section
+        self.IHC.roi = IHC_section
 
         if verbose:
             print('Filtering IST for section.')
-        self.IST.roi = self.SRT_img.sections[SRT_section]
+        self.IST.roi = self.XMI.sections[SRT_section]
 
         IST_path = Path(
             self.output_dir / f'transcripts_{SRT_section}.parquet'
@@ -645,8 +685,8 @@ class Phenium:
             if verbose:
                 print('Adjusting IHC to be of same shape as SRT imgs')
 
-            self.IHC_img.adjust(
-                self.SRT_img.roi[0, :, :],
+            self.IHC.adjust(
+                self.XMI.roi[0, :, :],
                 self.scaling_factor,
                 quick=quick,
                 verbose=verbose,
@@ -655,9 +695,9 @@ class Phenium:
         if self.prior_type == 'CP':
             style = self.CP_params['style']
             if style == 'focus':
-                masks = self.SRT_img.segment(self.CP_params, return_copy=True)
+                masks = self.XMI.segment(self.CP_params, return_copy=True)
             elif style == 'pheno':
-                masks = self.IHC_img.segment(self.CP_params, return_copy=True)
+                masks = self.IHC.segment(self.CP_params, return_copy=True)
             else:
                 raise NotImplementedError(
                     'Not implemented to segment on'
@@ -713,7 +753,7 @@ class Phenium:
         spatial = cells[
             ['centroid_x', 'centroid_y'] # , 'centroid_z']
         ].to_numpy()
-        spatial_scaled = spatial * self.SRT_img.pxsize[0]
+        spatial_scaled = spatial * self.XMI.pxsize[0]
 
         obs = cells[['original_cell_id', 'cell']]
         obs_names = cells['original_cell_id']
@@ -735,7 +775,7 @@ class Phenium:
 
         # library_id = f'tissue_{self.SRT_section}'
         # metadata = {
-        #     'images': {'hires': self.SRT_img.roi[0, :, :]},
+        #     'images': {'hires': self.XMI.roi[0, :, :]},
         #     'scalefactors': {
         #         'tissue_hires_scalef': 1,
         #         'spot_diameter_fullres': 0.25,
@@ -848,7 +888,6 @@ class Phenium:
             return adata
         else:
             self.adata = adata
-            return
 
     # def rename_cluster(self, new_names):
     #     old_names = self.adata.obs['leiden']
@@ -868,29 +907,52 @@ class Phenium:
     ):
         ply_path = self.output_dir / 'cell-polygon-layers.geojson.gz'
         gdf = gpd.read_file(
-            ply_path.as_uri().replace('file', 'gzip')
-        )
+                ply_path.as_uri().replace('file', 'gzip')
+            )
+
+        if cellid_celltype_dict is None:
+            oci_ci_dict = self.adata.obs.cell.to_dict()
+            oci_leiden_dict = self.adata.obs.leiden.to_dict()
+            cellid_celltype_dict = {
+                oci_ci_dict[oci]: oci_leiden_dict[oci]
+                for oci in self.adata.obs_names
+            }
+        fltr = [
+            idx in cellid_celltype_dict for idx in gdf.cell
+        ]
+        gdf = gdf[fltr]
         gdf['celltype'] = gdf.apply(
             lambda row: cellid_celltype_dict[row.cell],
             axis=1
         )
-        c = len(self.IHC_img.biomarkers)
+
+        if prot_celltype_dict is None:
+            prot_celltype_dict = dict(zip(
+                self.IHC.biomarkers,
+                np.random.randint(
+                    0,
+                    len(self.adata.uns['leiden_colors']),
+                    size=len(self.IHC.biomarkers))
+            ))
+        
+        c = len(self.IHC.biomarkers)
         z = self.layers
-        y, x = self.SRT_img.shape[1:]
+        y, x = self.XMI.roi.shape[1:]
         new_img = np.zeros((c, z, y, x))
-        for prot, celltypes in prot_celltype_dict:
+        for prot, celltypes in prot_celltype_dict.items():
+            if not isinstance(celltypes, list | tuple):
+                celltypes = [celltypes]
             for celltype in celltypes:
-                index = self.IHC_img.biomarkers[prot]
-                channel = self.IHC_img.roi[index, :, :]
-                # channel = self.transform_IHC_channel(self.IHC_img[index, :, :])
+                index = self.IHC.biomarkers[prot]
+                channel = self.IHC.roi[index, :, :]
                 cells = gdf.loc[gdf.celltype == celltype]
                 coords = np.argwhere(channel > 0)
                 for coord in coords:
-                    point = transform(Point(coord), lambda x: x/self.SRT_img.pxsize[0])
-                    mask = cells.contains(point)
+                    pnkt = transform(Point(coord), lambda x: x/self.XMI.pxsize[0])
+                    mask = cells.contains(pnkt)
                     if mask.any():
                         layers = set(cells.loc[cells.loc[mask]]['layer'])
                         new_value = channel[tuple(coord)]/len(layers)
                         new_img[index, tuple(layers), coord] = new_value
 
-            return new_img
+        return new_img
