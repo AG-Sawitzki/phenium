@@ -1,9 +1,11 @@
 import os
 import xml.etree.ElementTree as ET
-from multiprocessing import cpu_count
+from functools import partial
+from multiprocessing import Pool, cpu_count
 from pathlib import PurePath
 from typing import overload
 
+import ants
 import cv2
 import geopandas as gpd
 import numpy as np
@@ -15,6 +17,7 @@ import tqdm
 from numpy.typing import ArrayLike
 from PIL import Image, ImageDraw
 from shapely import Polygon
+from skimage.transform import rescale
 
 from phenium.exceptions import NotImplemented
 
@@ -427,6 +430,47 @@ def filter_by_location(
     return table
 
 
+def transform_image(
+    moving,
+    fixed,
+    scaling_factor,
+    reg_fwd
+):
+    moving = rescale(
+        moving,
+        scaling_factor,
+        preserve_range=True,
+    )
+    if isinstance(fixed, tuple):
+        fixed = np.zeros(fixed, dtype=np.int32)
+    else:
+        fixed = np.int32(fixed)
+    moving = np.int32(moving)
+
+    fixed_ant = ants.from_numpy(fixed)
+    moving_ant = ants.from_numpy(moving)
+
+    moving_transformed = ants.apply_transforms(
+        fixed=fixed_ant,
+        moving=moving_ant,
+        transformlist=reg_fwd,
+        interpolator="nearestNeighbor",
+    )
+
+    return moving_transformed.numpy()
+
+
+def value_at_cell(
+    cell_id,
+    masks,
+    roi
+):
+    if cell_id != 0:
+        fltr = masks == cell_id
+        vals = roi[:, fltr].sum(axis=1)
+    return vals
+
+
 def _draw_mask(
     idx,
     table,
@@ -471,30 +515,33 @@ def boundaries_to_mask(
     cell_ids = [row['cell_id'] for row in unique_ids.iter_rows(named=True)]
     cell_ids = sorted(cell_ids)
 
-    for idx in tqdm.tqdm(range(len(cell_ids))):
-        masks = _draw_mask(
-            idx,
-            table,
-            cell_ids,
-            masks,
-            pxsize,
-        )
+    # for idx in tqdm.tqdm(range(len(cell_ids))):
+    #     masks = _draw_mask(
+    #         idx,
+    #         table,
+    #         cell_ids,
+    #         masks,
+    #         pxsize,
+    #     )
 
-    # pool = Pool(processes=int(cpu_count()/2))
-    # res = pool.imap_unordered(
-    #     partial(
-    #         _draw_mask,
-    #         table=table,
-    #         cell_ids=cell_ids,
-    #         masks=masks,
-    #         pxsize=pxsize,
-    #     ),
-    #     range(len(cell_ids)),
-    #     chunksize=5,
-    # )
-    # pool.close()
-    # pool.join()
-    # print(res)
+    func = partial(
+        _draw_mask,
+        table=table,
+        cell_ids=cell_ids,
+        masks=masks,
+        pxsize=pxsize,
+    )
+    iterations = range(len(cell_ids))
+
+    with Pool(processes=3) as pool:
+        res = pool.imap_unordered(
+            func,
+            iterations,
+            chunksize=3,
+        )
+        pool.close()
+        pool.join()
+    print(res)
     print(sum(sum(masks)))
     return masks
 

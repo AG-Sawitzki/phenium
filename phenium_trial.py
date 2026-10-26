@@ -12,12 +12,19 @@ from scipy.io import mmread
 from shapely.geometry import Point
 
 
+import os
+
+os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = "8"
 
 from rich.traceback import install
 install(show_locals=True)
+
 import numpy as np
 import polars
+import tifffile
 from phenium.main import Phenium
+
+
 obj = Phenium(
     SRT_dir='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260827__133139__20260827_ITCAIM_lung-spleen_run4/output-XETG00410__0065619__non_infected_lung__20260827__133207',
 IHC_path='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260902_ITCAIM_Phenium_Slide8/Scan1/20260902_ITCAIM_Phenium_Slide8_Scan1.er.qptiff',
@@ -26,16 +33,22 @@ config_path='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/phenium/config.
 # prior_type='XOA',
 )
 
-obj.prepare(4, 12, quick=True, verbose=True, skip_affine=False)
+res = obj.prepare(4, 12, quick=True, verbose=True, skip_affine=False,)
+
+obj.IHC.segment(channels=("DAPI", "CD45"), chunks=4, return_copy=True)
+
+obj.IHC.make_feature_matrix(obj.IHC.masks)
+
+obj.IHC.roi.sum()
+
+# low, high = int(11652/2 - 500), int(11652/2 + 500)
+# excerpt = obj.IHC.roi[:, low:high, low:high]
+# tifffile.imwrite(obj.output_dir / 'roi_excerpt_adjusted.tif')
 
 # obj._run_proseg()
 
 obj.rank_genes(resolution=0.175)
 obj.function_name(None, None)
-
-
-obj.IHC.segment(channels=('DAPI', 'CD45'), chunks=4)
-obj.IHC.make_feature_matrix(obj.IHC.masks)
 
 # table = obj.transcripts
 # table = polars.read_parquet(

@@ -1,5 +1,6 @@
+from copy import deepcopy
 from functools import partial
-from itertools import product
+from itertools import chain, product
 from multiprocessing import Pool, cpu_count
 from pathlib import Path, PurePath
 
@@ -19,11 +20,12 @@ from cellpose import models
 from numpy.typing import ArrayLike
 from scipy import stats
 from scipy.io import loadmat, mmread
+from scipy.sparse import csr_matrix
 from shapely import transform
 from shapely.geometry import Point
 from skimage.transform import rescale
 
-from phenium.segment import cellpose_wrapper, proseg_wrapper
+from phenium.segment import proseg_wrapper
 from phenium.utils import (
     bboxes_to_sections,
     boundaries_to_mask,
@@ -35,6 +37,8 @@ from phenium.utils import (
     relative,
     run_leiden,
     scale_coords,
+    transform_image,
+    value_at_cell,
 )
 
 
@@ -72,13 +76,11 @@ class IMG:
             return self._roi
 
     @roi.setter
-    def roi(self, section,
-            # scaling_factor=None
-    ):
+    def roi(self, section):
         coords = self.sections[section]
         x = coords["x"]
         y = coords["y"]
-        self._roi = self.zrr["0"][:, y[0] : y[1], x[0] : x[1]]
+        self._roi = self.zrr["0"][:, y[0]:y[1], x[0]:x[1]]
 
     @property
     def biomarkers(self):
@@ -107,8 +109,8 @@ class IMG:
         fixed = np.uint32(fixed)
         moving = np.uint32(moving)
 
-        static = ants.from_numpy(fixed)
-        moving = ants.from_numpy(moving)
+        fixed_ant = ants.from_numpy(fixed)
+        moving_ant = ants.from_numpy(moving)
 
         if quick:
             tof = "antsRegistrationSyNQuick[r]"
@@ -116,8 +118,8 @@ class IMG:
             tof = "antsRegistrationSyN[r]"
 
         reg = ants.registration(
-            fixed=static,
-            moving=moving,
+            fixed=fixed_ant,
+            moving=moving_ant,
             type_of_transform=tof,
             verbose=verbose,
         )
@@ -139,98 +141,64 @@ class IMG:
 
         self.reg_fwd = reg["fwdtransforms"]
         self.reg_inv = reg["invtransforms"]
+        self.reg_factor = scaling_factor
+        self.reg_shape = fixed.shape
 
-    def transform_channel(self, channel, fixed, scaling_factor):
-        if isinstance(channel, str):
-            channel = self.biomarkers[channel]
-
-        moving = self.roi[channel]
-        moving = rescale(
-            moving,
-            scaling_factor,
-            preserve_range=True,
-        )
-        fixed = np.int32(fixed)
-        moving = np.int32(moving)
-
-        fixed_ant = ants.from_numpy(fixed)
-        moving_ant = ants.from_numpy(moving)
-
-        moving_transformed = ants.apply_transforms(
-            fixed=fixed_ant,
-            moving=moving_ant,
-            transformlist=self.reg_fwd,
-            interpolator='nearestNeighbor',
-        )
-
-        try:
-            self._roi_adj[channel] = moving_transformed
-        except AttributeError:
-            return moving_transformed
 
     def adjust(
         self,
-        fixed: ArrayLike,
-        scaling_factor: float,
-        quick: bool = False,
-        verbose: bool = False,
-        return_copy: bool = False,
+        verbose: bool = True,
+        parallel: bool = True,
     ) -> None:
         """
         Adjusts the roi to fit the input image from `find_affine`.
-        Replaces `self.roi`.
         """
-        self.find_affine(fixed, scaling_factor, quick, verbose)
-
-        iterations = self.biomarkers.values()
-        self._roi_adj = np.zeros((len(iterations),)+fixed.shape)
-
-        if quick:
-            func = partial(
-                self.transform_channel,
-                fixed=fixed,
-                scaling_factor=scaling_factor,
-            )
+        iterations = list(self.biomarkers.values())
+        moving = self.roi.copy()
+        # self._roi_adj = np.zeros((len(iterations),)+fixed.shape)
+        imgs = []
+        print('copied')
+        func = partial(
+            transform_image,
+            fixed=self.reg_shape,
+            reg_fwd=self.reg_fwd,
+            scaling_factor=self.reg_factor,
+        )
+        if parallel:
             if verbose:
-                print(
-                    'Combining verbose and parallel-processing does not work.'
-                )
-                with Pool(processes=int(cpu_count()/2)) as pool:
-                    res = pool.imap_unordered(func,iterations)
-                pool.close()
-                pool.join()
-                print(res)
+                res = []
+                with Pool(processes=2) as pool:
+                    for r in tqdm.tqdm(
+                        pool.imap(func, moving),
+                        total=len(iterations),
+                    ):
+                        res.append(r)
             else:
-                with Pool(processes=int(cpu_count()/2)) as pool:
-                    res = pool.imap_unordered(func,iterations)
-                pool.close()
-                pool.join()
-                print(res)
+                with Pool(processes=2) as pool:
+                    res = pool.imap(func, moving)
+                    pool.close()
+                    pool.join()
+            imgs = res
         else:
             if verbose:
                 pbar = tqdm.tqdm(total=len(iterations))
             for channel in iterations:
-                self.transform_channel(
-                    channel=channel,
-                    fixed=fixed,
-                    scaling_factor=scaling_factor
-                )
+                img = func(moving[channel])
+                imgs.append(img)
                 if verbose:
                     pbar.update(1)
             if verbose:
                 pbar.close()
-            
-        # imgs_stacked = np.dstack(imgs)
-        # imgs_stacked_moved = np.moveaxis(imgs_stacked, -1, 0)
-        # self._roi_adj = imgs_stacked_moved
-        if return_copy:
-            # return imgs_stacked_moved
-            return self._roi_adj
+
+        imgs_stacked = np.dstack(imgs)
+        imgs_stacked_moved = np.moveaxis(imgs_stacked, -1, 0)
+        self._roi_adj = imgs_stacked_moved
 
     def segment(
         self,
         channels: list[int | str] | tuple[int | str],
         chunks: int,
+        adjust_img: bool = True,
         return_copy: bool = False,
         # mkwargs,
         # ekwargs
@@ -251,11 +219,6 @@ class IMG:
         tile_overlap=0.1,
         compute_masks=True
     ):
-        # channels = tuple(params['channels'])
-        # chunks = params['chunks']
-        # eval_params = params['eval']
-        # model_params = params['model']
-        
         if isinstance(channels[0], int):
             pass
         elif isinstance(channels[0], str):
@@ -264,11 +227,26 @@ class IMG:
             )
         else:
             raise TypeError(
-                "`channels` in `params` has wrong type: \n"
-                f"\t {type(channels)}"
+                "`channels` has wrong type: \n"
+                f"\t {type(channels[0])}"
             )
 
-        _c, y, x = self.roi.shape
+        roi = self.roi[channels, :, :].copy()
+
+        if adjust_img:
+            imgs = []
+            for channel in roi:
+                channel_transformed = transform_image(
+                    channel,
+                    self.reg_shape,
+                    self.reg_factor,
+                    self.reg_fwd,
+                )
+                imgs.append(channel_transformed)
+            roi = np.dstack(imgs)
+            roi = np.moveaxis(roi, -1, 0)
+
+        _c, y, x = roi.shape
 
         x_size = chunk_size(x, chunks)
         y_size = chunk_size(y, chunks)
@@ -292,11 +270,9 @@ class IMG:
             x_low = int(x_c * 0.95)
             x_high = int((x_c + x_size) * 1.05)
 
-            roi_chunk = self.roi[
-                channels, y_low:y_high, x_low:x_high
+            roi_chunk = roi[
+                :, y_low:y_high, x_low:x_high
             ]
-            print(x_low, x_high)
-            print(y_low, y_high)
             masks, _flows, _styles = model.eval(
                 roi_chunk,
                 resample=resample,
@@ -311,35 +287,107 @@ class IMG:
                 tile_overlap=tile_overlap,
                 compute_masks=compute_masks,
             )
-            print(masks.shape)
-            print(masks.sum())
             all_masks[y_low:y_high, x_low:x_high] = masks
 
-        print(all_masks.sum())
         self.masks = all_masks
         if return_copy:
-            return all_masks
+            return all_masks, roi
 
-    def make_feature_matrix(self, masks,):
-        cell_ids = np.unique(masks, sorted=True)
-        feature_matrix = np.zeros((len(cell_ids), len(self.biomarkers)))
-        for cell_id in cell_ids:
-            if cell_id == 0:
-                continue
-            loc = np.argwhere(self.masks == cell_id)
-            y_loc = tuple(loc[:, 0])
-            x_loc = tuple(loc[:, 1])
-            for channel in self.biomarkers.values():
-                val = np.sum(self.roi[channel, y_loc, x_loc])
-                feature_matrix[cell_id, channel] = val
+    def make_feature_matrix(self, masks=None, parallel=True, verbose=True):
+        if masks is None:
+            masks = self.masks.copy()
+        if masks.shape != self.roi.shape[1:]:
+            self.adjust(verbose=verbose)
+
+        cell_ids = np.trim_zeros(np.unique(masks, sorted=True))
+        cell_ids = np.int32(cell_ids)
+        # feature_matrix = np.zeros((len(cell_ids), len(self.biomarkers)))
+        roi = self.roi.copy()
+        func = partial(
+            value_at_cell,
+            masks=masks,
+            roi=roi,
+        )
+        iterations = cell_ids
+        if parallel:
+            with Pool(processes=5) as pool:
+                res = []
+                if verbose:
+                    for r in tqdm.tqdm(
+                        pool.imap(func, iterations),
+                        total=len(iterations)
+                    ):
+                        res.append(r)
+                else:
+                    res = pool.imap(
+                        func,
+                        iterations
+                    )
+                pool.close()
+                pool.join()
+            print(res)
+            data = np.concat(res)
+            print(data)
+        else:
+            if verbose:
+                pbar = tqdm.tqdm(total=len(cell_ids))
+            for cell_id in cell_ids:
+                if cell_id == 0:
+                    continue
+                fltr = (masks == cell_id)
+                vals = roi[:, fltr].sum(axis=1)
+                # col.append(list(range(roi.shape[0])))
+                data.append(vals)
+                if verbose:
+                    pbar.update(1)
+            if verbose:
+                pbar.close()
+            data = np.array(data)
+        # row = (cell_ids-1).tolist()
+        # data = list(chain.from_iterable(data))
+        # col = list(chain.from_iterable(col))
+        feature_matrix = csr_matrix(data)
         self.feature_matrix = feature_matrix
+
+    def _anndata(self):
+        """
+        Only here because loading the spatialdata obj didn't work.
+        Hence, construction by hand.
+        """
+        counts = self.feature_matrix
+
+        obs = np.unique(self.masks, sorted=True)
+        obs_names = np.unique(self.masks, sorted=True)
+
+        var = self.biomarkers.keys()
+        var_names = self.biomarkers.keys()
+        X = counts.tocsr()
+
+        adata = ad.AnnData(
+            X=X,
+            obs=obs,
+            var=var,
+        )
+
+        adata.obs_names = obs_names
+        adata.var_names = var_names
+
+        # library_id = f'tissue_{self.SRT_section}'
+        # metadata = {
+        #     'images': {'hires': self.XMI.roi[0, :, :]},
+        #     'scalefactors': {
+        #         'tissue_hires_scalef': 1,
+        #         'spot_diameter_fullres': 0.25,
+        #     },
+        # }
+        # adata.uns['spatial'] = {library_id: metadata}
+
+        self.adata = adata
 
     def cluster(self, params, masks):
         self.segment(params)
         self.make_feature_matrix(masks)
 
-
-        
 
 
 class IST:
@@ -685,11 +733,11 @@ class Phenium:
             if verbose:
                 print('Adjusting IHC to be of same shape as SRT imgs')
 
-            self.IHC.adjust(
+            res = self.IHC.find_affine(
                 self.XMI.roi[0, :, :],
                 self.scaling_factor,
-                quick=quick,
-                verbose=verbose,
+                quick,
+                verbose,
             )
 
         if self.prior_type == 'CP':
@@ -717,6 +765,7 @@ class Phenium:
             f' Priors set to {self.prior_type}.'
             f'\n Prior_path: {self.prior_path}'
         )
+        return res
 
 
     def _run_proseg(

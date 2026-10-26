@@ -45,25 +45,25 @@
     - DIPY so far best performance
 - [x] found ANTsPy !
 
-## after proseg
-- [ ] run ovrlpy on proseg-separated transcripts
-    - [ ] segment with proseg
-    - [ ] separate transcripts of each layer
+# after proseg
+- [-] run ovrlpy on proseg-separated transcripts
+    - [-] segment with proseg
+    - [-] separate transcripts of each layer
         - a layer should be define by the thicknes of the sample
     - ...
-        - [ ] transcripts_locations as points in gdf
+        - [-] transcripts_locations as points in gdf
             - shapely.geometry.Point works on pl.DataFrame **row**
-        - [ ] check if point in polygon
+        - [-] check if point in polygon
             - for each layer
-        - [ ] apply check-array on transcripts
-        - [ ] asign to new layer df
-## cell and layer assignment
-- [ ] find layer cell is biggest in?
-- [ ] find cells containing transcript (location!)
-    - over all layers
-    -> frame of trans: cell1, cell1, cell2, cell1
-- [ ] asign transcript to dominant cell
-- [ ] asign transcript to new DF according to dominant cell-layer?
+        - [-] apply check-array on transcripts
+        - [-] asign to new layer df
+
+# cell and layer assignment
+- [-] find layer cell is biggest in?
+- [X] find cells containing prots (location!)
+    - over all layers  
+- [X] asign prot to cell
+    - [X] as sparse matrix
 
 ## protein assigning
 - pixel by pixel
@@ -74,16 +74,16 @@
 - distribute signal over cell layers by cell size
 
 # SC Analysis
-- [ ] QC metric (a nice to have)
-- [ ] Nearest Neighbour
-- [ ] leiden?
-- [ ] UMAP
-- [ ] celltypist
+- [X] QC metric (a nice to have)
+- [X] Nearest Neighbour
+- [X] leiden?
+- [X] UMAP
+- [-] celltypist
 
 # miscellaneous
 - [ ] pixel size must be calculated considering Physical Unit (296?)
 - [ ] z-slides based on transcript-distribution (phenium) and cell size (user) + tissue thickness (user)
 
-# Präsi for Mo. 12.10.2027
+# Präsi for Fr. 13.11.2026
 - [ ] find other Deconvolution methods
 - [ ] investigate QQ, Earth mover's distance & Minimum Spanning Tree
