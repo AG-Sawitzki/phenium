@@ -35,9 +35,11 @@ config_path='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/phenium/config.
 
 res = obj.prepare(4, 12, quick=True, verbose=True, skip_affine=False,)
 
-obj.IHC.segment(channels=("DAPI", "CD45"), chunks=4, return_copy=True)
+masks = obj.IHC.segment(channels=("DAPI", "CD45"), chunks=4, return_copy=True)
 
-obj.IHC.make_feature_matrix(obj.IHC.masks)
+obj.IHC.adjust(verbose=True)
+
+obj.IHC.make_feature_matrix(masks)
 
 obj.IHC.roi.sum()
 

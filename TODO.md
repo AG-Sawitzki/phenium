@@ -87,3 +87,4 @@
 # Präsi for Fr. 13.11.2026
 - [ ] find other Deconvolution methods
 - [ ] investigate QQ, Earth mover's distance & Minimum Spanning Tree
+- [ ] mark doublets!

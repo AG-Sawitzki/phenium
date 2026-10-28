@@ -1,3 +1,4 @@
+import gc
 from copy import deepcopy
 from functools import partial
 from itertools import chain, product
@@ -143,12 +144,14 @@ class IMG:
         self.reg_inv = reg["invtransforms"]
         self.reg_factor = scaling_factor
         self.reg_shape = fixed.shape
+        gc.collect()
 
 
     def adjust(
         self,
         verbose: bool = True,
         parallel: bool = True,
+        return_copy: bool = False,
     ) -> None:
         """
         Adjusts the roi to fit the input image from `find_affine`.
@@ -157,7 +160,6 @@ class IMG:
         moving = self.roi.copy()
         # self._roi_adj = np.zeros((len(iterations),)+fixed.shape)
         imgs = []
-        print('copied')
         func = partial(
             transform_image,
             fixed=self.reg_shape,
@@ -192,7 +194,11 @@ class IMG:
 
         imgs_stacked = np.dstack(imgs)
         imgs_stacked_moved = np.moveaxis(imgs_stacked, -1, 0)
-        self._roi_adj = imgs_stacked_moved
+        gc.collect()
+        if return_copy:
+            return imgs_stacked_moved
+        else:
+            self._roi_adj = imgs_stacked_moved
 
     def segment(
         self,
@@ -200,6 +206,7 @@ class IMG:
         chunks: int,
         adjust_img: bool = True,
         return_copy: bool = False,
+        verbose: bool = True,
         # mkwargs,
         # ekwargs
         gpu=True,
@@ -257,12 +264,15 @@ class IMG:
         )
 
         all_masks = np.zeros((y, x))
+        _ = torch.cuda.empty_cache()
         model = models.CellposeModel(
             gpu=gpu,
             pretrained_model=pretrained_model,
             device=torch.device(device),
             use_bfloat16=use_bfloat16,
         )
+        if verbose:
+            pbar = tqdm.tqdm(total=chunks)
         for chunk, (y_c, x_c) in enumerate(grid):
             y_low = int(y_c*0.95)
             y_high = int((y_c+y_size)*1.05)
@@ -288,10 +298,18 @@ class IMG:
                 compute_masks=compute_masks,
             )
             all_masks[y_low:y_high, x_low:x_high] = masks
+            if verbose:
+                pbar.update(1)
+        if verbose:
+            pbar.close()
 
-        self.masks = all_masks
+        del model
+        gc.collect()
+
         if return_copy:
-            return all_masks, roi
+            return all_masks
+        else:
+            self.masks = all_masks       
 
     def make_feature_matrix(self, masks=None, parallel=True, verbose=True):
         if masks is None:
@@ -302,7 +320,7 @@ class IMG:
         cell_ids = np.trim_zeros(np.unique(masks, sorted=True))
         cell_ids = np.int32(cell_ids)
         # feature_matrix = np.zeros((len(cell_ids), len(self.biomarkers)))
-        roi = self.roi.copy()
+        roi = deepcopy(self.roi)
         func = partial(
             value_at_cell,
             masks=masks,
@@ -310,8 +328,8 @@ class IMG:
         )
         iterations = cell_ids
         if parallel:
-            with Pool(processes=5) as pool:
-                res = []
+            res = []
+            with Pool(processes=2) as pool:
                 if verbose:
                     for r in tqdm.tqdm(
                         pool.imap(func, iterations),
@@ -347,12 +365,12 @@ class IMG:
         # data = list(chain.from_iterable(data))
         # col = list(chain.from_iterable(col))
         feature_matrix = csr_matrix(data)
+        gc.collect()
         self.feature_matrix = feature_matrix
 
     def _anndata(self):
         """
-        Only here because loading the spatialdata obj didn't work.
-        Hence, construction by hand.
+        Making an anndata obj.
         """
         counts = self.feature_matrix
 
@@ -510,6 +528,8 @@ class IST:
         z = table.select('z_location').to_numpy()
         self.z_bounds = (z.min(), z.max())
 
+        gc.collect()
+
         if return_copy:
             return table
         else:
@@ -663,6 +683,7 @@ class Phenium:
             self.XMI.sections[self.SRT_section],
             pixelsize=self.XMI.pxsize[0]
         )
+        gc.collect()
         return filtered_table
 
     def _XOA_masks(self):
@@ -684,6 +705,7 @@ class Phenium:
             masks,
             allow_pickle=True
         )
+        gc.collect()
         # with open(self.output_dir / f'XOA_polygons_{self.SRT_section}.json') as f:
         #     json.dump(f, polygons)
 
@@ -740,31 +762,32 @@ class Phenium:
                 verbose,
             )
 
-        if self.prior_type == 'CP':
-            style = self.CP_params['style']
-            if style == 'focus':
-                masks = self.XMI.segment(self.CP_params, return_copy=True)
-            elif style == 'pheno':
-                masks = self.IHC.segment(self.CP_params, return_copy=True)
-            else:
-                raise NotImplementedError(
-                    'Not implemented to segment on'
-                    f'{self.CP_params['style']}'
-                )
-            self.prior_path = Path(
-                self.output_dir / f"CP_masks_{self.SRT_section}_{style}.npy"
-            )
-            np.save(self.prior_path, masks, allow_pickle=True)
-        elif self.prior_type == 'XOA':
-            self._XOA_masks()
-        else:
-            print('No or unknown prior.')
-            self.prior_path = ''
+        # if self.prior_type == 'CP':
+        #     style = self.CP_params['style']
+        #     if style == 'focus':
+        #         masks = self.XMI.segment(self.CP_params, return_copy=True)
+        #     elif style == 'pheno':
+        #         masks = self.IHC.segment(channels=channels, return_copy=True)
+        #     else:
+        #         raise NotImplementedError(
+        #             'Not implemented to segment on'
+        #             f'{self.CP_params['style']}'
+        #         )
+        #     self.prior_path = Path(
+        #         self.output_dir / f"CP_masks_{self.SRT_section}_{style}.npy"
+        #     )
+        #     np.save(self.prior_path, masks, allow_pickle=True)
+        # elif self.prior_type == 'XOA':
+        #     self._XOA_masks()
+        # else:
+        #     print('No or unknown prior.')
+        #     self.prior_path = ''
 
         print(
             f' Priors set to {self.prior_type}.'
             f'\n Prior_path: {self.prior_path}'
         )
+        gc.collect()
         return res
 
 
@@ -833,6 +856,7 @@ class Phenium:
         # adata.uns['spatial'] = {library_id: metadata}
 
         self.adata = adata
+        gc.collect()
 
     def rank_genes(
         self,
@@ -933,6 +957,8 @@ class Phenium:
         #     show=False,
         # ).figure.savefig(self.output_dir / 'knn_umap_leiden_ct.png')
 
+        gc.collect()
+
         if return_copy:
             return adata
         else:
@@ -988,12 +1014,15 @@ class Phenium:
         z = self.layers
         y, x = self.XMI.roi.shape[1:]
         new_img = np.zeros((c, z, y, x))
+
+        gc.collect()
+
         for prot, celltypes in prot_celltype_dict.items():
+            index = self.IHC.biomarkers[prot]
+            channel = self.IHC.roi[index, :, :]
             if not isinstance(celltypes, list | tuple):
                 celltypes = [celltypes]
             for celltype in celltypes:
-                index = self.IHC.biomarkers[prot]
-                channel = self.IHC.roi[index, :, :]
                 cells = gdf.loc[gdf.celltype == celltype]
                 coords = np.argwhere(channel > 0)
                 for coord in coords:
@@ -1003,5 +1032,7 @@ class Phenium:
                         layers = set(cells.loc[cells.loc[mask]]['layer'])
                         new_value = channel[tuple(coord)]/len(layers)
                         new_img[index, tuple(layers), coord] = new_value
+
+        gc.collect()
 
         return new_img
