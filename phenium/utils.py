@@ -1,3 +1,4 @@
+import math
 import os
 import xml.etree.ElementTree as ET
 from functools import partial
@@ -11,6 +12,7 @@ import geopandas as gpd
 import numpy as np
 import ovrlpy
 import polars as pl
+import polars.selectors as cs
 import scanpy as sc
 import tifffile
 import tqdm
@@ -45,7 +47,7 @@ def chunk_size(var: int, chunks: int) -> int:
         out : int
             Width or Height of chunk.
     """
-    return int(var * np.sqrt(chunks) / chunks)
+    return int(math.prod([var, math.sqrt(chunks) / chunks]))
 
 
 def to_cli(
@@ -104,42 +106,38 @@ def find_rois(
     """
     c, y, x = shape_org
 
-    subres = img_subres[0, ...]
-    subres_normed = subres/np.max(subres)
-    subres_U8I = np.uint8(subres_normed*255)
-    subres_dilated = cv2.dilate(
-        subres_U8I,
-        np.ones((3, 3)),
-        iterations=3
-    )
-    _, subres_binary = cv2.threshold(
-        subres_dilated,
-        int(np.average(subres_dilated)), 255, 0
+    img_subres = np.float64(img_subres[0, ...])
+    img_subres /= img_subres.max()
+    img_subres = np.uint8(img_subres * 255)
+    img_subres = cv2.dilate(img_subres, np.ones((3, 3)), iterations=3)
+    _, img_subres = cv2.threshold(
+        img_subres,
+        int(np.average(img_subres)),
+        255, 0
     )
     contours, _ = cv2.findContours(
-        subres_binary,
+        img_subres,
         cv2.RETR_LIST,
         cv2.CHAIN_APPROX_SIMPLE
     )
 
-    bboxes = []
-    scores = []
-    for c in contours:
+    bboxes = np.zeros((len(contours), 4))
+    scores = np.zeros(len(contours))
+    for idx, c in enumerate(contours):
         (x, y), (w, h), _a = cv2.minAreaRect(c)
         dim = max(w, h)
-        bboxes.append([x,y,dim,dim])
-        scores.append(w*h)
-
-    scores_normed = [x/max(scores) for x in scores]
+        bboxes[idx] = [x, y, dim, dim]
+        scores[idx] = w*h
+    scores /= max(scores)
 
     ids_to_keep = cv2.dnn.NMSBoxes(
-        bboxes,
-        scores=scores_normed,
+        bboxes.tolist(),
+        scores=scores.tolist(),
         score_threshold=0.1,
         nms_threshold=0.0,
     )
 
-    bboxes_to_keep = np.array(bboxes)[ids_to_keep]
+    bboxes_to_keep = bboxes[ids_to_keep]
     bboxes_sorted = sorted(bboxes_to_keep, key=lambda k: [int(k[1]/100), k[0]])
 
     return bboxes_sorted
@@ -171,13 +169,15 @@ def bboxes_to_sections(
     if isinstance(subres, tuple):
         _c_s, y_s, x_s = subres
     else:
-        marked_img = np.uint8(subres[0, ...]).copy()
+        marked_img = np.uint8(subres[0, ...])
         y_s, x_s = marked_img.shape
 
     rf_x = int(x/x_s)
     rf_y = int(y/y_s)
 
-    sections = {}
+    sections = {
+        idx: {'x': [0, 0], 'y': [0, 0]} for idx in range(len(bboxes))
+    }
 
     for section, bbox in enumerate(bboxes):
         x, y, w, h = bbox
@@ -229,7 +229,7 @@ def scale_coords(coords, factor):
     """
     x = np.array(coords['x'])
     y = np.array(coords['y'])
-    new_coords = {}
+    new_coords = {'x': [0, 0], 'y': [0, 0]}
 
     if isinstance(factor, tuple):
         if len(factor) == 2:
@@ -317,11 +317,12 @@ def pixelate(
             Same table as input, but with adjusted coordinates.
     """
     if isinstance(table, pl.DataFrame):
-        columns = [c for c in table.columns if ('vertex_' in c or '_location' in c)]
-        pixeled = table.select(
-            (pl.col(columns[0]) / pixelsize_xy).round(0),
-            (pl.col(columns[1]) / pixelsize_xy).round(0),
+        columns = (
+            (cs.ends_with('_location') & ~cs.starts_with('z'))
+            | (cs.starts_with('vertex_') & ~cs.ends_with('z'))
         )
+        pixeled = table.select(columns) / pixelsize_xy
+        pixeled = pixeled.round(0)
         table = table.update(pixeled)
     if isinstance(table, gpd.GeoDataFrame):
         geometry = table['geometry'].transform(
@@ -401,23 +402,16 @@ def filter_by_location(
         y_min, y_max = coords['y']
 
         if pixelsize:
-            x_min = float(x_min * pixelsize)
-            x_max = float(x_max * pixelsize)
-            y_min = float(y_min * pixelsize)
-            y_max = float(y_max * pixelsize)
+            x_min *= pixelsize
+            x_max *= pixelsize
+            y_min *= pixelsize
+            y_max *= pixelsize
 
         polygon = Polygon([
             (x_min, y_min), (x_max, y_min),
             (x_min, y_max), (x_max, y_max),
             (x_min, y_min),
         ])
-        # if pixelsize:
-        #     geometry = table['geometry'].transform(
-        #         lambda x: (x * np.array([
-        #             1/pixelsize, 1/pixelsize
-        #         ])).round(0)
-        #     )
-        #     table['geometry'] = geometry
         check = table['geometry'].within(polygon)
         table = table[check]
         if table.index.name in table.columns:
@@ -533,7 +527,7 @@ def boundaries_to_mask(
     )
     iterations = range(len(cell_ids))
 
-    with Pool(processes=3) as pool:
+    with Pool(processes=2) as pool:
         res = pool.imap_unordered(
             func,
             iterations,

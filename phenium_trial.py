@@ -37,8 +37,6 @@ res = obj.prepare(4, 12, quick=True, verbose=True, skip_affine=False,)
 
 masks = obj.IHC.segment(channels=("DAPI", "CD45"), chunks=4, return_copy=True)
 
-obj.IHC.adjust(verbose=True)
-
 obj.IHC.make_feature_matrix(masks)
 
 obj.IHC.roi.sum()

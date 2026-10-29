@@ -1,5 +1,7 @@
 import gc
+import math
 from copy import deepcopy
+from dataclasses import dataclass
 from functools import partial
 from itertools import chain, product
 from multiprocessing import Pool, cpu_count
@@ -48,6 +50,22 @@ class IMG:
     multi-channel img
     (c, y, x) or (c, z, y, x)
     """
+    __slots__ = [
+        "_roi",
+        "_roi_adj",
+        "adata",
+        "affine_transform",
+        "feature_matrix",
+        "masks",
+        "overview",
+        "path",
+        "reg_factor",
+        "reg_fwd",
+        "reg_inv",
+        "reg_shape",
+        "sections",
+        "zrr"
+    ]
     def __init__(
         self,
         path,
@@ -55,19 +73,28 @@ class IMG:
         self.path = Path(path)
         store = tifffile.imread(self.path, aszarr=True)
         self.zrr = zarr.open(store, mode="r")
-        self.shape = self.zrr["0"].shape
-        self.pxsize = get_pixel_size(self.path)
 
-        subresolution_lvl = len(self.zrr)
         bboxes = find_rois(
             self.shape,
-            self.zrr[str(subresolution_lvl-2)]
+            self.zrr[str(self.lvl-2)]
         )
         self.sections, self.overview = bboxes_to_sections(
             bboxes,
             self.shape,
-            self.zrr[str(subresolution_lvl-2)]
+            self.zrr[str(self.lvl-2)]
         )
+
+    @property
+    def lvl(self):
+        return len(self.zrr)
+
+    @property
+    def shape(self):
+        return self.zrr['0'].shape            
+
+    @property
+    def pxsize(self):
+        return get_pixel_size(self.path)
 
     @property
     def roi(self):
@@ -157,7 +184,7 @@ class IMG:
         Adjusts the roi to fit the input image from `find_affine`.
         """
         iterations = list(self.biomarkers.values())
-        moving = self.roi.copy()
+        moving = self.roi.copy() if parallel else self.roi
         # self._roi_adj = np.zeros((len(iterations),)+fixed.shape)
         imgs = []
         func = partial(
@@ -203,8 +230,7 @@ class IMG:
     def segment(
         self,
         channels: list[int | str] | tuple[int | str],
-        chunks: int,
-        adjust_img: bool = True,
+        chunks: int = 4,
         return_copy: bool = False,
         verbose: bool = True,
         # mkwargs,
@@ -240,19 +266,6 @@ class IMG:
 
         roi = self.roi[channels, :, :].copy()
 
-        if adjust_img:
-            imgs = []
-            for channel in roi:
-                channel_transformed = transform_image(
-                    channel,
-                    self.reg_shape,
-                    self.reg_factor,
-                    self.reg_fwd,
-                )
-                imgs.append(channel_transformed)
-            roi = np.dstack(imgs)
-            roi = np.moveaxis(roi, -1, 0)
-
         _c, y, x = roi.shape
 
         x_size = chunk_size(x, chunks)
@@ -263,7 +276,7 @@ class IMG:
             range(0, x-x % x_size, x_size)
         )
 
-        all_masks = np.zeros((y, x))
+        all_masks = np.zeros((y, x), dtype=np.uint16)
         _ = torch.cuda.empty_cache()
         model = models.CellposeModel(
             gpu=gpu,
@@ -273,7 +286,7 @@ class IMG:
         )
         if verbose:
             pbar = tqdm.tqdm(total=chunks)
-        for chunk, (y_c, x_c) in enumerate(grid):
+        for (y_c, x_c) in grid:
             y_low = int(y_c*0.95)
             y_high = int((y_c+y_size)*1.05)
 
@@ -297,6 +310,7 @@ class IMG:
                 tile_overlap=tile_overlap,
                 compute_masks=compute_masks,
             )
+            masks[masks != 0] += all_masks.max()
             all_masks[y_low:y_high, x_low:x_high] = masks
             if verbose:
                 pbar.update(1)
@@ -311,60 +325,108 @@ class IMG:
         else:
             self.masks = all_masks       
 
-    def make_feature_matrix(self, masks=None, parallel=True, verbose=True):
+    def make_feature_matrix(
+        self,
+        masks: ArrayLike=None,
+        chunks: int = 4,
+        parallel: bool=True,
+        verbose: bool=True
+    )-> None:
         if masks is None:
             masks = self.masks.copy()
         if masks.shape != self.roi.shape[1:]:
             self.adjust(verbose=verbose)
 
-        cell_ids = np.trim_zeros(np.unique(masks, sorted=True))
-        cell_ids = np.int32(cell_ids)
+        cell_ids = np.unique(masks, sorted=True)[1:]
+        cell_ids = np.astype(cell_ids, masks.dtype)
+        cell_ids = np.expand_dims(cell_ids, 1)
         # feature_matrix = np.zeros((len(cell_ids), len(self.biomarkers)))
-        roi = deepcopy(self.roi)
+        roi = deepcopy(self.roi) if parallel else self.roi
+        
+        # _c, y, x = self.roi.shape
+        # x_size = chunk_size(x, chunks)
+        # y_size = chunk_size(y, chunks)
+        # grid = product(
+        #     range(0, y - y % y_size, y_size),
+        #     range(0, x - x % x_size, x_size)
+        # )
+        datas = []
+        arr_chunks = np.array_split(
+            np.expand_dims(cell_ids, 1), chunks
+        )
+
         func = partial(
             value_at_cell,
-            masks=masks,
-            roi=roi,
+            masks = masks,
+            roi = roi
         )
-        iterations = cell_ids
-        if parallel:
-            res = []
-            with Pool(processes=2) as pool:
-                if verbose:
-                    for r in tqdm.tqdm(
-                        pool.imap(func, iterations),
-                        total=len(iterations)
-                    ):
-                        res.append(r)
-                else:
-                    res = pool.imap(
-                        func,
-                        iterations
-                    )
-                pool.close()
-                pool.join()
+        cnuf = partial(
+            np.apply_along_axis,
+            func1d=func,
+            axis=1
+        )
+        res = []
+        with Pool(chunks) as pool:
+            for r in tqdm.tqdm(pool.imap(cnuf, arr_chunks), total=chunks):
+                res.append(r)
+            pool.close()
+            pool.join()
             print(res)
-            data = np.concat(res)
-            print(data)
-        else:
-            if verbose:
-                pbar = tqdm.tqdm(total=len(cell_ids))
-            for cell_id in cell_ids:
-                if cell_id == 0:
-                    continue
-                fltr = (masks == cell_id)
-                vals = roi[:, fltr].sum(axis=1)
-                # col.append(list(range(roi.shape[0])))
-                data.append(vals)
-                if verbose:
-                    pbar.update(1)
-            if verbose:
-                pbar.close()
-            data = np.array(data)
+            res = np.concat(res)
+            print(res)
+        datas = res
+        # for (y_c, x_c) in grid:
+        #     y_low = int(y_c * 0.95)
+        #     y_high = int((y_c + y_size) * 1.05)
+
+        #     x_low = int(x_c * 0.95)
+        #     x_high = int((x_c + x_size) * 1.05)
+
+        #     roi_chunk = self.roi[:, y_low:y_high, x_low:x_high]
+        #     mask_chunk = masks[y_low:y_high, x_low:x_high]
+
+        #     func = partial(
+        #         value_at_cell,
+        #         masks=mask_chunk,
+        #         roi=roi_chunk,
+        #     )
+        #     if parallel:
+        #         res = []
+        #         with Pool(processes=2) as pool:
+        #             if verbose:
+        #                 for r in tqdm.tqdm(
+        #                     pool.imap(func, iterations),
+        #                     total=len(iterations)
+        #                 ):
+        #                     res.append(r)
+        #             else:
+        #                 res = pool.imap(
+        #                     func,
+        #                     iterations
+        #                 )
+        #             pool.close()
+        #             pool.join()
+        #         print(res)
+        #         data = np.concat(res)
+        #         print(data)
+        #     else:
+        #         if verbose:
+        #             pbar = tqdm.tqdm(total=len(cell_ids))
+        #         for cell_id in cell_ids:
+        #             vals = func(cell_id)
+        #             # col.append(list(range(roi.shape[0])))
+        #             data.append(vals)
+        #             if verbose:
+        #                 pbar.update(1)
+        #         if verbose:
+        #             pbar.close()
+        #         data = np.array(data)
+        #     datas.append(data)
+        print(datas)
         # row = (cell_ids-1).tolist()
         # data = list(chain.from_iterable(data))
         # col = list(chain.from_iterable(col))
-        feature_matrix = csr_matrix(data)
+        feature_matrix = csr_matrix(datas)
         gc.collect()
         self.feature_matrix = feature_matrix
 
@@ -407,11 +469,17 @@ class IMG:
         self.make_feature_matrix(masks)
 
 
-
 class IST:
     """
     imaging based spatially resolved transcriptomics
     """
+    __slots__ = [
+        '_roi',
+        'path',
+        'pxsize',
+        'table',
+        'z_bounds',
+    ]
     def __init__(self, path, pxsize):
         self.path = Path(path)
         self.pxsize = float(pxsize)
@@ -572,6 +640,24 @@ class Phenium:
         scaling_factor
         seed
     """
+    __slots__ = [
+        "IHC",
+        "IHC_path",
+        "IST",
+        "SRT_dir",
+        "XMI",
+        "_IHC_section",
+        "_SRT_section",
+        "_prior_path",
+        'adata',
+        "cell_size",
+        "config",
+        'counts',
+        "machine",
+        "output_dir",
+        "prior_type",
+        "scaling_factor",
+    ]
     def __init__(
         self,
         SRT_dir: str | PurePath,
@@ -754,13 +840,13 @@ class Phenium:
         if not skip_affine:
             if verbose:
                 print('Adjusting IHC to be of same shape as SRT imgs')
-
-            res = self.IHC.find_affine(
+            self.IHC.find_affine(
                 self.XMI.roi[0, :, :],
                 self.scaling_factor,
                 quick,
                 verbose,
             )
+            self.IHC.adjust(verbose=verbose)
 
         # if self.prior_type == 'CP':
         #     style = self.CP_params['style']
@@ -788,7 +874,6 @@ class Phenium:
             f'\n Prior_path: {self.prior_path}'
         )
         gc.collect()
-        return res
 
 
     def _run_proseg(
@@ -1009,11 +1094,11 @@ class Phenium:
                     len(self.adata.uns['leiden_colors']),
                     size=len(self.IHC.biomarkers))
             ))
-        
-        c = len(self.IHC.biomarkers)
-        z = self.layers
-        y, x = self.XMI.roi.shape[1:]
-        new_img = np.zeros((c, z, y, x))
+
+        new_img = np.zeros(
+            (len(self.IHC.biomarkers), self.layers,)
+            + self.XMI.roi.shape[1:]
+        )
 
         gc.collect()
 
