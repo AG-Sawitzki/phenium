@@ -148,6 +148,7 @@ def bboxes_to_sections(
     bboxes: list[ArrayLike],
     shape_org: tuple,
     subres: tuple,
+    buffer: int = 128
 ) -> dict:
     pass
 @overload
@@ -155,25 +156,27 @@ def bboxes_to_sections(
     bboxes: list[ArrayLike],
     shape_org: tuple,
     subres: ArrayLike,
+    buffer: int = 128
 ) -> tuple[dict, ArrayLike]:
     pass
 def bboxes_to_sections(
     bboxes,
     shape_org,
     subres,
+    buffer = 128
 ):
     """
     Takes bounding boxes from cv2 and organizes the coordinates into a dictionary.
     """
-    _c, y, x = shape_org
+    _C, Y, X = shape_org
     if isinstance(subres, tuple):
-        _c_s, y_s, x_s = subres
+        _C_s, Y_s, X_s = subres
     else:
         marked_img = np.uint8(subres[0, ...])
-        y_s, x_s = marked_img.shape
+        Y_s, X_s = marked_img.shape
 
-    rf_x = int(x/x_s)
-    rf_y = int(y/y_s)
+    rf_x = int(X/X_s)
+    rf_y = int(Y/Y_s)
 
     sections = {
         idx: {'x': [0, 0], 'y': [0, 0]} for idx in range(len(bboxes))
@@ -181,9 +184,13 @@ def bboxes_to_sections(
 
     for section, bbox in enumerate(bboxes):
         x, y, w, h = bbox
+        x_low = int(max(0, ((x - w / 2) * rf_x) - buffer))
+        x_high = int(min(X, ((x + w / 2) * rf_x) + buffer))
+        y_low = int(max(0, ((y - h / 2) * rf_y) - buffer))
+        y_high = int(min(Y, ((y + h / 2) * rf_y) + buffer))
         sections[section] = {
-            'x': [int((x-w/2)*rf_x), int((x+w/2)*rf_x)],
-            'y': [int((y-h/2)*rf_y), int((y+h/2)*rf_y)]
+            'x': [x_low, x_high],
+            'y': [y_low, y_high]
         }
         if not isinstance(subres, tuple):
             cv2.rectangle(
@@ -652,7 +659,9 @@ def get_biomarkers(img_path):
 def run_leiden(
     adata,
     resolution: float = 0.25,
-    gpu: bool = False,
+    percent_top=(25, 75, 150),
+    n_comps=100,
+    n_pcs=40
 ):
     """
     Prepare for and then run Leiden on an anndata object.
@@ -672,7 +681,7 @@ def run_leiden(
     """
     sc.pp.calculate_qc_metrics(
         adata,
-        percent_top=(25, 75, 150),
+        percent_top=percent_top,
         inplace=True,
         log1p=True
     )
@@ -683,7 +692,7 @@ def run_leiden(
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
 
-    sc.tl.pca(adata, n_comps=100)
+    sc.tl.pca(adata, n_comps=n_comps)
 
     # if gpu:
     #     rsc.get.anndata_to_GPU(adata, convert_all=True)
@@ -692,7 +701,7 @@ def run_leiden(
     #     rsc.tl.leiden(adata, resolution=resolution)
     #     rsc.get.anndata_to_CPU(adata, convert_all=True)
     # else:
-    sc.pp.neighbors(adata, n_neighbors=15, n_pcs=40)
+    sc.pp.neighbors(adata, n_neighbors=15, n_pcs=n_pcs)
     sc.tl.umap(adata)
     sc.tl.leiden(adata, resolution=resolution, flavor='igraph', n_iterations=2)
 

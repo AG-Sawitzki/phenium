@@ -11,6 +11,7 @@ import anndata as ad
 import ants
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import polars as pl
 import scanpy as sc
 import squidpy as sq
@@ -236,12 +237,12 @@ class IMG:
         # mkwargs,
         # ekwargs
         gpu=True,
-        pretrained_model='cpdino',
-        device='cuda:0',
+        pretrained_model="cpdino",
+        device="cuda:0",
         use_bfloat16=True,
         batch_size=8,
         resample=True,
-        channel_axis=None,
+        channel_axis=0,
         cellprob_threshold=0.0,
         do_3D=False,
         flow3D_smooth=0,
@@ -250,7 +251,7 @@ class IMG:
         max_size_fraction=0.4,
         augment=False,
         tile_overlap=0.1,
-        compute_masks=True
+        compute_masks=True,
     ):
         if isinstance(channels[0], int):
             pass
@@ -270,12 +271,12 @@ class IMG:
 
         x_size = chunk_size(x, chunks)
         y_size = chunk_size(y, chunks)
-
         grid = product(
             range(0, y-y % y_size, y_size),
             range(0, x-x % x_size, x_size)
         )
-
+        vrlpy = max(0.05*y, 32)
+        vrlpx = max(0.05*x, 32)
         all_masks = np.zeros((y, x), dtype=np.uint16)
         _ = torch.cuda.empty_cache()
         model = models.CellposeModel(
@@ -287,11 +288,11 @@ class IMG:
         if verbose:
             pbar = tqdm.tqdm(total=chunks)
         for (y_c, x_c) in grid:
-            y_low = int(y_c*0.95)
-            y_high = int((y_c+y_size)*1.05)
+            y_low = max(0, int(y_c - vrlpy))
+            y_high = min(y, int(y_c + y_size + vrlpy))
 
-            x_low = int(x_c * 0.95)
-            x_high = int((x_c + x_size) * 1.05)
+            x_low = max(0, int(x_c - vrlpx))
+            x_high = min(x, int(x_c + x_size + vrlpx))
 
             roi_chunk = roi[
                 :, y_low:y_high, x_low:x_high
@@ -318,17 +319,16 @@ class IMG:
             pbar.close()
 
         del model
+        self.masks = all_masks
         gc.collect()
-
         if return_copy:
             return all_masks
-        else:
-            self.masks = all_masks       
 
     def make_feature_matrix(
         self,
         masks: ArrayLike=None,
-        chunks: int = 4,
+        # chunks: int = 9,
+        tile_size: int = 128,
         parallel: bool=True,
         verbose: bool=True
     )-> None:
@@ -336,99 +336,49 @@ class IMG:
             masks = self.masks.copy()
         if masks.shape != self.roi.shape[1:]:
             self.adjust(verbose=verbose)
-
-        cell_ids = np.unique(masks, sorted=True)[1:]
-        cell_ids = np.astype(cell_ids, masks.dtype)
-        cell_ids = np.expand_dims(cell_ids, 1)
-        # feature_matrix = np.zeros((len(cell_ids), len(self.biomarkers)))
-        roi = deepcopy(self.roi) if parallel else self.roi
         
-        # _c, y, x = self.roi.shape
-        # x_size = chunk_size(x, chunks)
-        # y_size = chunk_size(y, chunks)
-        # grid = product(
-        #     range(0, y - y % y_size, y_size),
-        #     range(0, x - x % x_size, x_size)
-        # )
-        datas = []
-        arr_chunks = np.array_split(
-            np.expand_dims(cell_ids, 1), chunks
+        _c, y, x = self.roi.shape
+        if isinstance(tile_size, tuple):
+            x_size, y_size = tile_size
+        else:
+            x_size = y_size = tile_size
+
+        x_range = range(
+            0,
+            int(x - math.fmod(x, x_size)),
+            x_size
         )
-
-        func = partial(
-            value_at_cell,
-            masks = masks,
-            roi = roi
+        y_range = range(
+            0,
+            int(y - math.fmod(y, y_size)),
+            y_size
         )
-        cnuf = partial(
-            np.apply_along_axis,
-            func1d=func,
-            axis=1
-        )
-        res = []
-        with Pool(chunks) as pool:
-            for r in tqdm.tqdm(pool.imap(cnuf, arr_chunks), total=chunks):
-                res.append(r)
-            pool.close()
-            pool.join()
-            print(res)
-            res = np.concat(res)
-            print(res)
-        datas = res
-        # for (y_c, x_c) in grid:
-        #     y_low = int(y_c * 0.95)
-        #     y_high = int((y_c + y_size) * 1.05)
+        grid = product(y_range, x_range)
+        data = np.zeros((np.max(masks)+1, len(self.biomarkers)))
+        if verbose:
+            pbar = tqdm.tqdm(total=len(y_range)*len(x_range))
+        for (y_c, x_c) in grid:
+            y_low = y_c
+            y_high = y_c + y_size
+            x_low = x_c
+            x_high = x_c + x_size
 
-        #     x_low = int(x_c * 0.95)
-        #     x_high = int((x_c + x_size) * 1.05)
+            roi = self.roi[:, y_low:y_high, x_low:x_high]
+            mask = masks[y_low:y_high, x_low:x_high]
+            func = partial(value_at_cell, masks=mask, roi=roi)
 
-        #     roi_chunk = self.roi[:, y_low:y_high, x_low:x_high]
-        #     mask_chunk = masks[y_low:y_high, x_low:x_high]
-
-        #     func = partial(
-        #         value_at_cell,
-        #         masks=mask_chunk,
-        #         roi=roi_chunk,
-        #     )
-        #     if parallel:
-        #         res = []
-        #         with Pool(processes=2) as pool:
-        #             if verbose:
-        #                 for r in tqdm.tqdm(
-        #                     pool.imap(func, iterations),
-        #                     total=len(iterations)
-        #                 ):
-        #                     res.append(r)
-        #             else:
-        #                 res = pool.imap(
-        #                     func,
-        #                     iterations
-        #                 )
-        #             pool.close()
-        #             pool.join()
-        #         print(res)
-        #         data = np.concat(res)
-        #         print(data)
-        #     else:
-        #         if verbose:
-        #             pbar = tqdm.tqdm(total=len(cell_ids))
-        #         for cell_id in cell_ids:
-        #             vals = func(cell_id)
-        #             # col.append(list(range(roi.shape[0])))
-        #             data.append(vals)
-        #             if verbose:
-        #                 pbar.update(1)
-        #         if verbose:
-        #             pbar.close()
-        #         data = np.array(data)
-        #     datas.append(data)
-        print(datas)
-        # row = (cell_ids-1).tolist()
-        # data = list(chain.from_iterable(data))
-        # col = list(chain.from_iterable(col))
-        feature_matrix = csr_matrix(datas)
-        gc.collect()
+            if np.count_nonzero(mask) > 0:
+                cell_ids = np.trim_zeros(np.unique(mask, sorted=True))
+                cell_ids_e = np.expand_dims(cell_ids, 1)
+                res = np.apply_along_axis(func, 1, cell_ids_e)
+                data[cell_ids] += res
+            if verbose:
+                pbar.update(1)
+        if verbose:
+            pbar.close()
+        feature_matrix = csr_matrix(data)
         self.feature_matrix = feature_matrix
+        gc.collect()
 
     def _anndata(self):
         """
@@ -436,11 +386,13 @@ class IMG:
         """
         counts = self.feature_matrix
 
-        obs = np.unique(self.masks, sorted=True)
-        obs_names = np.unique(self.masks, sorted=True)
+        rows, _ = counts.shape
+        obs = (np.arange(rows)+1).tolist()
+        var = list(self.biomarkers.keys())
 
-        var = self.biomarkers.keys()
-        var_names = self.biomarkers.keys()
+        obs = pd.DataFrame(obs)
+        var = pd.DataFrame(var)
+
         X = counts.tocsr()
 
         adata = ad.AnnData(
@@ -449,25 +401,32 @@ class IMG:
             var=var,
         )
 
-        adata.obs_names = obs_names
-        adata.var_names = var_names
+        adata.obs_names = obs[0]
+        adata.var_names = var[0]
 
-        # library_id = f'tissue_{self.SRT_section}'
-        # metadata = {
-        #     'images': {'hires': self.XMI.roi[0, :, :]},
-        #     'scalefactors': {
-        #         'tissue_hires_scalef': 1,
-        #         'spot_diameter_fullres': 0.25,
-        #     },
-        # }
-        # adata.uns['spatial'] = {library_id: metadata}
+        return adata
 
-        self.adata = adata
+    def cluster(
+        self,
+        resolution=0.175,
+        return_copy=False
+    ):
+        adata = self._anndata()
 
-    def cluster(self, params, masks):
-        self.segment(params)
-        self.make_feature_matrix(masks)
+        adata = run_leiden(
+            adata,
+            resolution=resolution,
+            percent_top=(3, 8, 15),
+            n_comps=4,
+            n_pcs=4
+        )
 
+        sc.tl.rank_genes_groups(adata, groupby="leiden")
+        
+        if return_copy:
+            return adata
+        else:
+            self.adata = adata
 
 class IST:
     """
@@ -649,10 +608,11 @@ class Phenium:
         "_IHC_section",
         "_SRT_section",
         "_prior_path",
-        'adata',
+        "adata",
         "cell_size",
+        "channels",
         "config",
-        'counts',
+        "counts",
         "machine",
         "output_dir",
         "prior_type",
@@ -666,6 +626,7 @@ class Phenium:
         config_path: str | PurePath,
         machine: str = 'xenium',
         prior_type: str = '',
+        channels: tuple = (None, None),
         cell_size: int = 5,
         seed: int| None = None,
     )-> None:
@@ -680,6 +641,7 @@ class Phenium:
 
         self.machine = machine
         self.prior_type = prior_type
+        self.channels = channels
         self.cell_size = cell_size
 
         self.XMI = IMG(
@@ -848,26 +810,29 @@ class Phenium:
             )
             self.IHC.adjust(verbose=verbose)
 
-        # if self.prior_type == 'CP':
-        #     style = self.CP_params['style']
-        #     if style == 'focus':
-        #         masks = self.XMI.segment(self.CP_params, return_copy=True)
-        #     elif style == 'pheno':
-        #         masks = self.IHC.segment(channels=channels, return_copy=True)
-        #     else:
-        #         raise NotImplementedError(
-        #             'Not implemented to segment on'
-        #             f'{self.CP_params['style']}'
-        #         )
-        #     self.prior_path = Path(
-        #         self.output_dir / f"CP_masks_{self.SRT_section}_{style}.npy"
-        #     )
-        #     np.save(self.prior_path, masks, allow_pickle=True)
-        # elif self.prior_type == 'XOA':
-        #     self._XOA_masks()
-        # else:
-        #     print('No or unknown prior.')
-        #     self.prior_path = ''
+        if self.prior_type == 'CP':
+            style = self.CP_params['style']
+            channels = self.channels
+            if style == 'focus':
+                masks = self.XMI.segment(channels=channels, return_copy=True)
+            elif style == 'pheno':
+                masks = self.IHC.segment(channels=channels, return_copy=True)
+            else:
+                raise NotImplementedError(
+                    'Not implemented to segment on'
+                    f'{self.CP_params['style']}'
+                )
+            self.prior_path = Path(
+                self.output_dir / f"CP_masks_{self.SRT_section}_{style}.npy"
+            )
+            np.save(self.prior_path, np.uint32(masks), allow_pickle=True)
+        elif self.prior_type == 'XOA':
+            raise NotImplementedError(
+                'Have not implemented that yet. Sowwy :< '
+            )
+        else:
+            print('No or unknown prior.')
+            self.prior_path = ''
 
         print(
             f' Priors set to {self.prior_type}.'
@@ -946,7 +911,6 @@ class Phenium:
     def rank_genes(
         self,
         resolution=0.25,
-        gpu=False,
         return_copy=False,
         as_csv=True,
         as_dotplot=True,
@@ -956,7 +920,7 @@ class Phenium:
 
         adata = self.adata
 
-        adata = run_leiden(adata, resolution=resolution, gpu=gpu)
+        adata = run_leiden(adata, resolution=resolution)
 
         sc.pl.umap(
             adata,
@@ -1064,6 +1028,7 @@ class Phenium:
         self,
         cellid_celltype_dict,
         prot_celltype_dict,
+        verbose: bool = True,
     ):
         ply_path = self.output_dir / 'cell-polygon-layers.geojson.gz'
         gdf = gpd.read_file(
@@ -1101,7 +1066,8 @@ class Phenium:
         )
 
         gc.collect()
-
+        if verbose:
+            pbar = tqdm.tqdm(total=len(prot_celltype_dict.keys()))
         for prot, celltypes in prot_celltype_dict.items():
             index = self.IHC.biomarkers[prot]
             channel = self.IHC.roi[index, :, :]
@@ -1117,7 +1083,10 @@ class Phenium:
                         layers = set(cells.loc[cells.loc[mask]]['layer'])
                         new_value = channel[tuple(coord)]/len(layers)
                         new_img[index, tuple(layers), coord] = new_value
-
+            if verbose:
+                pbar.update(1)
+        if verbose:
+            pbar.close()
         gc.collect()
 
         return new_img

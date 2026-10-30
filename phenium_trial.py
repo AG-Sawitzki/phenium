@@ -6,7 +6,6 @@ import geopandas as gpd
 # import spatialdata
 import polars as pl
 import rapids_singlecell as rsc
-import scanpy as sc
 from cupyx.scipy.sparse import csr_matrix
 from scipy.io import mmread
 from shapely.geometry import Point
@@ -14,7 +13,7 @@ from shapely.geometry import Point
 
 import os
 
-os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = "8"
+os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = "16"
 
 from rich.traceback import install
 install(show_locals=True)
@@ -22,6 +21,7 @@ install(show_locals=True)
 import numpy as np
 import polars
 import tifffile
+import scanpy as sc
 from phenium.main import Phenium
 
 
@@ -30,26 +30,57 @@ obj = Phenium(
 IHC_path='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260902_ITCAIM_Phenium_Slide8/Scan1/20260902_ITCAIM_Phenium_Slide8_Scan1.er.qptiff',
 output_dir='/data/cephfs-1/scratch/projects/sawitzki-phenium',
 config_path='/data/cephfs-2/unmirrored/projects/sawitzki-phenium/phenium/config.toml',
-# prior_type='XOA',
+prior_type='CP',
+channels=('DAPI', 'CD45')
 )
 
-res = obj.prepare(4, 12, quick=True, verbose=True, skip_affine=False,)
+res = obj.prepare(4, 12, quick=False, verbose=True, skip_affine=False,)
 
-masks = obj.IHC.segment(channels=("DAPI", "CD45"), chunks=4, return_copy=True)
+obj.IHC.segment(channels=("DAPI", "CD45"), chunks=9)
 
-obj.IHC.make_feature_matrix(masks)
+obj.IHC.make_feature_matrix()
 
-obj.IHC.roi.sum()
+obj.IHC.cluster(resolution=0.175)
 
-# low, high = int(11652/2 - 500), int(11652/2 + 500)
-# excerpt = obj.IHC.roi[:, low:high, low:high]
-# tifffile.imwrite(obj.output_dir / 'roi_excerpt_adjusted.tif')
+adata = obj.IHC.adata
 
-# obj._run_proseg()
+sc.pl.umap(
+    adata,
+color="leiden",
+legend_loc="on data",
+show=False,
+).figure.savefig(
+    obj.output_dir / 'umap_IMG_r0.175.pdf'
+)
+
+# rank_genes_groups_dotplot doesn't work on IHC adata ?!!
+rgg = adata.uns['rank_genes_groups']
+cluster = len(adata.uns['leiden_colors'])
+temp_pdf_list = []
+for c in range(cluster):
+temp_pdf = polars.DataFrame(
+    data={
+        'genes' : rgg['names'][str(c)],
+    'cluster': [c]*len(rgg['names'][str(c)]),
+    'pvals' : rgg['pvals_adj'][str(c)],
+    'logfc' : rgg['logfoldchanges'][str(c)],
+}
+).sort('pvals')
+temp_pdf_list.append(temp_pdf.filter(
+    polars.col('pvals') < 0.01
+))
+pdf = polars.concat(temp_pdf_list)
+pdf.write_csv(obj.output_dir / 'ranked_genes_IMG_r0.175.csv')
+
+obj._run_proseg()
 
 obj.rank_genes(resolution=0.175)
-obj.function_name(None, None)
+new_img = obj.function_name(None, None)
 
+low = int(11652/2 - 500)
+high = int(11652/2 + 500)
+
+tifffile.imwrite(obj.output_dir / 'func_name_img_IHC.tif', new_img[:, :, low:high, low:high], bigtiff=True)
 # table = obj.transcripts
 # table = polars.read_parquet(
 #     '/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260716__161300__20260716_ITCAIM_lung-spleen_run1/output-XETG00410__0064543__spleen__20260716__161318/transcripts.parquet'
@@ -115,7 +146,7 @@ adata = ad.AnnData(X=X, obs=obs.to_pandas(), var=var.to_pandas(), obsm=obsm)
 adata.obs_names = obs_names.to_pandas()
 adata.var_names = var_names.to_pandas()
 
-sc.calculate_qc_metrics(adata, percent_top=(50, 100, 200), inplace=True, log1p=False)
+sc.pp.calculate_qc_metrics(adata, percent_top=(50, 100, 200), inplace=True, log1p=False)
 
 gdata = rsc.get.anndata_to_GPU(adata, convert_all=True, copy=True)
 

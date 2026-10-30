@@ -97,7 +97,7 @@ diffusion-proposal-sigma-z = 0.2
 # style of segmentation.
 # Either: 'pheno' for PhenoCycler input
 # or 'focus' for morphology_focus input.
-style = 'focus'
+style = 'pheno'
 # dapi and membrane channel-positions
 # or biomarker name
 channels = [0, 1]
