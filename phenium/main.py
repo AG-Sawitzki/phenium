@@ -33,6 +33,7 @@ from phenium.segment import proseg_wrapper
 from phenium.utils import (
     bboxes_to_sections,
     boundaries_to_mask,
+    cell_loc,
     chunk_size,
     filter_by_location,
     find_rois,
@@ -40,6 +41,7 @@ from phenium.utils import (
     get_pixel_size,
     relative,
     run_leiden,
+    save_anndata,
     scale_coords,
     transform_image,
     value_at_cell,
@@ -56,6 +58,7 @@ class IMG:
         "_roi_adj",
         "adata",
         "affine_transform",
+        "cell_loc",
         "feature_matrix",
         "masks",
         "overview",
@@ -113,11 +116,7 @@ class IMG:
 
     @property
     def biomarkers(self):
-        if self.path.suffix == ".qptiff":
-            biomarkers = get_biomarkers(self.path)
-        else:
-            biomarkers = {}
-
+        biomarkers = get_biomarkers(self.path)
         return biomarkers
 
     def find_affine(
@@ -267,14 +266,21 @@ class IMG:
 
         roi = self.roi[channels, :, :].copy()
 
-        _c, y, x = roi.shape
+        if self.roi.ndim == 3:
+            _c, y, x = self.roi.shape
+        elif self.roi.ndim == 4:
+            _z, _c, y, x = self.roi.shape
+        else:
+            raise NotImplementedError("What is this shape?")
 
         x_size = chunk_size(x, chunks)
         y_size = chunk_size(y, chunks)
-        grid = product(
-            range(0, y-y % y_size, y_size),
-            range(0, x-x % x_size, x_size)
-        )
+
+        x_range = range(0, int(x - math.fmod(x, x_size)), x_size)
+        y_range = range(0, int(y - math.fmod(y, y_size)), y_size)
+
+        grid = product(y_range, x_range)
+
         vrlpy = max(0.05*y, 32)
         vrlpx = max(0.05*x, 32)
         all_masks = np.zeros((y, x), dtype=np.uint16)
@@ -326,18 +332,21 @@ class IMG:
 
     def make_feature_matrix(
         self,
-        masks: ArrayLike=None,
-        # chunks: int = 9,
-        tile_size: int = 128,
-        parallel: bool=True,
-        verbose: bool=True
+        masks: ArrayLike = None,
+        tile_size: tuple[int, int] | int = 64,
     )-> None:
         if masks is None:
             masks = self.masks.copy()
         if masks.shape != self.roi.shape[1:]:
-            self.adjust(verbose=verbose)
-        
-        _c, y, x = self.roi.shape
+            self.adjust()
+
+        if self.roi.ndim == 3:
+            _c, y, x = self.roi.shape
+        elif self.roi.ndim == 4:
+            _z, _c, y, x = self.roi.shape
+        else:
+            raise NotImplementedError("What is this shape?")
+
         if isinstance(tile_size, tuple):
             x_size, y_size = tile_size
         else:
@@ -355,8 +364,6 @@ class IMG:
         )
         grid = product(y_range, x_range)
         data = np.zeros((np.max(masks)+1, len(self.biomarkers)))
-        if verbose:
-            pbar = tqdm.tqdm(total=len(y_range)*len(x_range))
         for (y_c, x_c) in grid:
             y_low = y_c
             y_high = y_c + y_size
@@ -372,12 +379,48 @@ class IMG:
                 cell_ids_e = np.expand_dims(cell_ids, 1)
                 res = np.apply_along_axis(func, 1, cell_ids_e)
                 data[cell_ids] += res
-            if verbose:
-                pbar.update(1)
-        if verbose:
-            pbar.close()
         feature_matrix = csr_matrix(data)
         self.feature_matrix = feature_matrix
+        gc.collect()
+
+    def find_cell_loc(
+        self,
+        masks: ArrayLike = None,
+        tile_size: tuple[int, int] | int = 64,
+    ):
+        if masks is None:
+            masks = self.masks.copy()
+
+        if masks.ndim == 2:
+            y, x = masks.shape
+        else:
+            _, y, x = masks.shape
+
+        if isinstance(tile_size, tuple):
+            x_size, y_size = tile_size
+        else:
+            x_size = y_size = tile_size
+
+        x_range = range(0, int(x - math.fmod(x, x_size)), x_size)
+        y_range = range(0, int(y - math.fmod(y, y_size)), y_size)
+        grid = product(y_range, x_range)
+        data = np.zeros((np.max(masks) + 1, 2))
+        for y_c, x_c in grid:
+            y_low = y_c
+            y_high = y_c + y_size
+            x_low = x_c
+            x_high = x_c + x_size
+
+            mask = masks[y_low:y_high, x_low:x_high]
+            func = partial(cell_loc, masks=mask)
+
+            if np.count_nonzero(mask) > 0:
+                cell_ids = np.trim_zeros(np.unique(mask, sorted=True))
+                cell_ids_e = np.expand_dims(cell_ids, 1)
+                res = np.apply_along_axis(func, 1, cell_ids_e)
+                data[cell_ids] = res + [y_low, x_low]
+        self.cell_loc = data
+        # pl.DataFrame(data=data, blah = ["centroid_x", "centroid_y"])
         gc.collect()
 
     def _anndata(self):
@@ -387,22 +430,22 @@ class IMG:
         counts = self.feature_matrix
 
         rows, _ = counts.shape
-        obs = (np.arange(rows)+1).tolist()
+        obs = np.arange(rows).tolist()
         var = list(self.biomarkers.keys())
 
-        obs = pd.DataFrame(obs)
-        var = pd.DataFrame(var)
+        obs = pd.DataFrame({'cell':obs})
+        var = pd.DataFrame({'protein':var})
 
         X = counts.tocsr()
+
+        obsm = {"spatial": self.cell_loc}
 
         adata = ad.AnnData(
             X=X,
             obs=obs,
             var=var,
+            obsm=obsm
         )
-
-        adata.obs_names = obs[0]
-        adata.var_names = var[0]
 
         return adata
 
@@ -411,6 +454,9 @@ class IMG:
         resolution=0.175,
         return_copy=False
     ):
+        self.make_feature_matrix()
+        self.find_cell_loc()
+
         adata = self._anndata()
 
         adata = run_leiden(
@@ -422,11 +468,9 @@ class IMG:
         )
 
         sc.tl.rank_genes_groups(adata, groupby="leiden")
-        
-        if return_copy:
-            return adata
-        else:
-            self.adata = adata
+
+        self.adata = adata
+
 
 class IST:
     """
@@ -841,7 +885,7 @@ class Phenium:
         gc.collect()
 
 
-    def _run_proseg(
+    def run_proseg(
         self,
     ) -> None:
         proseg_wrapper(
@@ -908,13 +952,11 @@ class Phenium:
         self.adata = adata
         gc.collect()
 
-    def rank_genes(
+    def cluster(
         self,
         resolution=0.25,
+        save=True,
         return_copy=False,
-        as_csv=True,
-        as_dotplot=True,
-        as_spatial_scatter=True,
     ):
         self._anndata()
 
@@ -922,73 +964,13 @@ class Phenium:
 
         adata = run_leiden(adata, resolution=resolution)
 
-        sc.pl.umap(
-            adata,
-            color='leiden',
-            legend_loc='on data',
-            show=False,
-        ).figure.savefig(
-            self.output_dir / (
-                f'plots/knn_umap_leiden_r{resolution}.pdf'
-            )
-        )
-
         sc.tl.rank_genes_groups(
             adata,
             groupby='leiden'
         )
 
-        adata.write_h5ad(
-            self.output_dir / f'adata_r{resolution}.h5ad',
-        )
-
-        if as_csv:
-            rgg = adata.uns['rank_genes_groups']
-            cluster = len(adata.uns['leiden_colors'])
-            temp_pdf_list = []
-            for c in range(cluster):
-                temp_pdf = pl.DataFrame(
-                    data={
-                        'genes' : rgg['names'][str(c)],
-                        'cluster': [c]*len(rgg['names'][str(c)]),
-                        'pvals' : rgg['pvals_adj'][str(c)],
-                        'logfc' : rgg['logfoldchanges'][str(c)],
-                    }
-                ).sort('pvals')
-                temp_pdf_list.append(temp_pdf.filter(
-                    pl.col('pvals') < 0.01
-                ))
-            pdf = pl.concat(temp_pdf_list)
-            pdf.write_csv(self.output_dir / f'ranked_genes_r{resolution}.csv')
-
-        if as_dotplot:
-            sc.pl.rank_genes_groups_dotplot(
-                adata,
-                n_genes=3,
-                values_to_plot='logfoldchanges',
-                cmap='bwr',
-                colorbar_title='log fold change',
-                show=False,
-                figsize = (12,6),
-            )['mainplot_ax'].figure.savefig(
-                self.output_dir / (
-                    f'plots/ranked_genes_dotplot_r{resolution}.pdf'
-                )
-            )
-
-        if as_spatial_scatter:
-            sq.pl.spatial_scatter(
-                adata,
-                shape=None,
-                color='leiden',
-                size=50,
-                figsize=(50,50),
-                save=(
-                    self.output_dir / (
-                        f'plots/spatial_scatter_leiden_r{resolution}.pdf'
-                    )
-                )
-            )
+        if save:
+            save_anndata(adata, prefix='IST', output_dir=self.output_dir)
 
         # predictions = celltypist.annotate(
         #     self.adata,

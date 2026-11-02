@@ -36,10 +36,6 @@ channels=('DAPI', 'CD45')
 
 res = obj.prepare(4, 12, quick=False, verbose=True, skip_affine=False,)
 
-obj.IHC.segment(channels=("DAPI", "CD45"), chunks=9)
-
-obj.IHC.make_feature_matrix()
-
 obj.IHC.cluster(resolution=0.175)
 
 adata = obj.IHC.adata
@@ -69,10 +65,12 @@ temp_pdf = polars.DataFrame(
 temp_pdf_list.append(temp_pdf.filter(
     polars.col('pvals') < 0.01
 ))
+
 pdf = polars.concat(temp_pdf_list)
 pdf.write_csv(obj.output_dir / 'ranked_genes_IMG_r0.175.csv')
 
-obj._run_proseg()
+
+obj.run_proseg()
 
 obj.rank_genes(resolution=0.175)
 new_img = obj.function_name(None, None)
@@ -81,6 +79,7 @@ low = int(11652/2 - 500)
 high = int(11652/2 + 500)
 
 tifffile.imwrite(obj.output_dir / 'func_name_img_IHC.tif', new_img[:, :, low:high, low:high], bigtiff=True)
+
 # table = obj.transcripts
 # table = polars.read_parquet(
 #     '/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260716__161300__20260716_ITCAIM_lung-spleen_run1/output-XETG00410__0064543__spleen__20260716__161318/transcripts.parquet'

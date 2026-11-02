@@ -241,7 +241,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libzlib-1.3.2-h25fd6f3_3.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libzopfli-1.0.3-h9c3ff4c_0.tar.bz2
       - conda: https://conda.anaconda.org/conda-forge/linux-64/llvm-openmp-23.1.3-h7148c6a_1.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/llvmlite-0.46.0-py313hdd307be_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/llvmlite-0.50.0-py313hd9b1b65_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/lz4-4.4.5-py313h557dd98_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/lz4-c-1.10.0-hee9eb32_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/lzo-2.10-hebe6cf0_1003.conda
@@ -259,7 +259,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/nccl-2.32.3.1-h4d09622_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/ncurses-6.6-hdb14827_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/nlohmann_json-3.12.0-h54a6638_2.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/numba-0.64.0-py313h5dce7c4_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/numba-0.68.0-py313h901f96d_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/numcodecs-0.17.0-py313h12b3e8d_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/numpy-2.3.5-py313hf6604e3_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/ocl-icd-2.3.4-hb03c661_1.conda
@@ -4377,24 +4377,24 @@ packages:
     - _openmp_mutex * *_llvm
   size: 6121536
   timestamp: 1791950734069
-- conda: https://conda.anaconda.org/conda-forge/linux-64/llvmlite-0.46.0-py313hdd307be_0.conda
-  sha256: 0e1bc6ee1c7885cc26c37fcd1a2095169a4e4e148860c600d3f685b6a4f32322
-  md5: d99ac09b331711fd12e16323ca8d96e4
+- conda: https://conda.anaconda.org/conda-forge/linux-64/llvmlite-0.50.0-py313hd9b1b65_0.conda
+  sha256: 7e3326679c6d84c4e8b4f4b08d3de7f4a9c32eb5ed9a646b02237079d7a49f84
+  md5: 0bc8dd5fb24742bb1ec28f0b382a612e
   depends:
+  - python
   - __glibc >=2.17,<3.0.a0
-  - libgcc >=14
-  - libstdcxx >=14
-  - libzlib >=1.3.1,<2.0a0
-  - python >=3.13,<3.14.0a0
+  - libstdcxx >=15
+  - libgcc >=15
   - python_abi 3.13.* *_cp313
+  - libzlib >=1.3.2,<2.0a0
   - zstd >=1.5.7,<1.6.0a0
   license: BSD-2-Clause
   license_family: BSD
   purls:
-  - pkg:pypi/llvmlite?source=hash-mapping
+  - pkg:pypi/llvmlite?source=compressed-mapping
   run_exports: {}
-  size: 34130706
-  timestamp: 1765280056189
+  size: 40832807
+  timestamp: 1790753618853
 - conda: https://conda.anaconda.org/conda-forge/linux-64/lz4-4.4.5-py313h557dd98_2.conda
   sha256: 676801cce09062d52c2fad82eaafb6e04fde55330803a81f0d91c363b4e6f396
   md5: de26b919ee6e2b485e455882eb84b99d
@@ -4674,33 +4674,33 @@ packages:
   run_exports: {}
   size: 136372
   timestamp: 1785920438981
-- conda: https://conda.anaconda.org/conda-forge/linux-64/numba-0.64.0-py313h5dce7c4_0.conda
-  sha256: 3c6e9f28b5d1d987041011c0b5a1052e730df6c682b47e8a7fd7b6f00040d562
-  md5: 90caff1954fb5cacc0b3e75f5066ae7c
+- conda: https://conda.anaconda.org/conda-forge/linux-64/numba-0.68.0-py313h901f96d_1.conda
+  sha256: c280a44724bab4c52263c9a7c5bb30cf95db2ac09fa8db8199d5834f43899f71
+  md5: cd9f8a92f98fcfd2c2aa5948b958de83
   depends:
-  - __glibc >=2.17,<3.0.a0
+  - python
+  - llvmlite >=0.50.0,<0.51.0a0
+  - numpy >=1.22.3,<2.6
   - _openmp_mutex >=4.5
-  - libgcc >=14
-  - libstdcxx >=14
-  - llvmlite >=0.46.0,<0.47.0a0
-  - numpy >=1.22.3,<2.5
-  - numpy >=1.23,<3
-  - python >=3.13,<3.14.0a0
+  - libgcc >=15
+  - libstdcxx >=15
+  - __glibc >=2.17,<3.0.a0
   - python_abi 3.13.* *_cp313
+  - numpy >=1.25,<3
   constrains:
-  - cuda-version >=11.2
-  - scipy >=1.0
-  - libopenblas !=0.3.6
-  - cudatoolkit >=11.2
   - tbb >=2021.6.0
+  - libopenblas !=0.3.6
+  - cuda-version >=11.2
+  - cudatoolkit >=11.2
+  - scipy >=1.0
   - cuda-python >=11.6
   license: BSD-2-Clause
   license_family: BSD
   purls:
-  - pkg:pypi/numba?source=hash-mapping
+  - pkg:pypi/numba?source=compressed-mapping
   run_exports: {}
-  size: 5764718
-  timestamp: 1772481814929
+  size: 6179240
+  timestamp: 1790835910125
 - conda: https://conda.anaconda.org/conda-forge/linux-64/numcodecs-0.17.0-py313h12b3e8d_1.conda
   sha256: b3e393ff2a3ba14af6308729850734f002ebadacff14641109a3071e303c66f5
   md5: a9a5095b73124de28d231040ea871de1
