@@ -19,10 +19,11 @@ import polars.selectors as cs
 import scanpy as sc
 import squidpy as sq
 import tifffile
-from numba import jit
+from cellpose.utils import outlines_list
 from numpy.typing import ArrayLike
 from PIL import Image, ImageDraw
 from shapely import Polygon
+from skimage.filters import sobel
 from skimage.transform import rescale
 
 from phenium.exceptions import NotImplemented
@@ -484,8 +485,21 @@ def cell_loc(
         _, x = masks.shape
         fltr = masks == cell_id
         idx = np.argmax(fltr)
-        loc = np.array([math.floor(idx/x), math.fmod(idx,x)])
+        loc = np.array([math.fmod(idx, x), math.floor(idx / x)])
         return loc
+
+
+def cell_contour(
+    cell_id,
+    masks,
+):
+    if cell_id != 0:
+        fltr = masks == cell_id
+        if np.count_nonzero(fltr) > 3:
+            cntr = sobel(fltr)
+            y, x = np.nonzero(cntr)
+            if len(y) > 3 & len(x) > 3:
+                return Polygon(x, y)
 
 
 def _draw_mask(
@@ -735,76 +749,59 @@ def run_leiden(
     return adata
 
 
-def save_anndata(
-    adata: ad.AnnData,
-    prefix: str,
-    output_dir: PurePath,
-    pval_max: float=0.01
-):
+# function form stackoverflow
+# adapted to return shapely Polygons
+def process_roi(masks: ArrayLike) -> gpd.GeoDataFrame:
+    """
+    Get the polgyons from the prediction-masks using cellpose.utils functions.
 
-    ad_dir = output_dir / f'{prefix}_anndata'
-    ad_dir.mkdir(parents=False, exist_ok=True)
+    Saves them as a GeoDataFrame (geojson)
 
-    adata.write_h5ad(ad_dir / "adata.h5ad")
-    print('adata saved.')
+    Parameters
+    ----------
+        npy_data : ArrayLike
+            The numpy.ndarray of the masks.
+        npy_base_output_path : Path
+            Path to save the geojson.
 
-    try:
-        sc.pl.umap(
-            adata,
-            color="leiden",
-            legend_loc="on data",
-            show=False,
-        ).figure.savefig(ad_dir / "plots/knn_umap_leiden.pdf")
-        print('umap saved.')
-    except:
-        print('no leiden')
-
-    try:
-        rgg = adata.uns['rank_genes_groups']
-        cluster = len(adata.uns['leiden_colors'])
-        temp_pdf_list = []
-        for c in range(cluster):
-            temp_pdf = pl.DataFrame(
-                data={
-                    'genes' : rgg['names'][str(c)],
-                    'cluster': [c]*len(rgg['names'][str(c)]),
-                    'pvals' : rgg['pvals_adj'][str(c)],
-                    'logfc' : rgg['logfoldchanges'][str(c)],
-                }
-            ).sort('pvals')
-            temp_pdf_list.append(temp_pdf.filter(pl.col("pvals") < pval_max))
-
-        pdf = pl.concat(temp_pdf_list)
-        pdf.write_csv(ad_dir / 'ranked_genes.csv')
-        print('ranked csv saved.')
-    except:
-        print('no ranking data.')
-
-    try:
-        sc.pl.rank_genes_groups_dotplot(
-            adata,
-            n_genes=3,
-            values_to_plot="logfoldchanges",
-            cmap="bwr",
-            colorbar_title="log fold change",
-            show=False,
-            figsize=(12, 6),
-        )["mainplot_ax"].figure.savefig(
-            ad_dir / "ranked_genes_dotplot.pdf"
-        )
-        print('ranked dotplot saved.')
-    except:
-        print('no ranking data.')
-
-    try:
-        sq.pl.spatial_scatter(
-            adata,
-            shape=None,
-            color="leiden",
-            size=50,
-            figsize=(50, 50),
-            save=(ad_dir / "spatial_scatter_leiden.pdf"),
-        )
-        print('spatial scatter saved')
-    except:
-        print('no spatial data.')
+    Returns
+    ----------
+        out : None
+            Automatically saves the GDF under npy_base_output_path.
+    """
+    print(" - Extracting ROI")
+    masks = masks.squeeze()
+    # change the index order:
+    # first the cell then the layer it is on.
+    # thus one would know how the same cell looks on different layers
+    data = {"cell": [], "layer": [], "geometry": []}
+    if masks.ndim == 3:
+        zs = min(masks.shape)
+        posZ = masks.shape.index(zs)
+        for z in range(zs):
+            if posZ == 0:
+                mask_z = masks[z, ...]
+            elif posZ == 1:
+                mask_z = masks[:, z, :]
+            else:
+                mask_z = masks[..., z]
+            print(f" - Layer {z}")
+            coords_list = outlines_list(mask_z)
+            i = 1
+            for coords in coords_list:
+                data["layer"].append(z)
+                data["name"].append(f"cell_{i}")
+                data["geometry"].append(Polygon(coords))
+                i += 1
+    else:
+        coords_list = outlines_list(masks)
+        i = 1
+        for coords in coords_list:
+            data["layer"].append(np.nan)
+            data["cell"].append(f"cell_{i}")
+            data["geometry"].append(Polygon(coords))
+            i += 1
+    gdf = gpd.GeoDataFrame(data=data)
+    gdf.set_index(["layer", "name"])
+    print(" - Saving GeoDataFrame")
+    return gdf

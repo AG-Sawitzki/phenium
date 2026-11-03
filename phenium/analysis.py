@@ -59,7 +59,7 @@ def vis_doublets(doublets, masks):
     # )
 
     # compare masks and doublets
-    stuff = {"single_cell": {}, "double_cell": {}}
+    stuff = {"no_cell": {}, "single_cell": {}, "double_cell": {}}
     for idx, row in enumerate(doublets.iter_rows(named=True)):
         pnkt = Point(row["x"], row["y"]) # perhaps not a point but a small square around that point?
         fltr = masks["geometry"].covers(pnkt)
@@ -70,6 +70,8 @@ def vis_doublets(doublets, masks):
                 stuff["double_cell"][str(idx)] = cells
             else:
                 stuff["single_cell"][str(idx)] = cells
+        else:
+            stuff["no_cell"][str(idx)] = pnkt
 
     success_rate = len(stuff["double_cell"]) / len(doublets)
 
@@ -96,9 +98,3 @@ def verify_doublets(adata, stuff):
         # if two different cells ovrelap then 
             # check if off different celltype
 
-
-def plot_doublets():
-    pass
-    # plot the cells
-    # if cell part of confirmed doublet change color to green
-    # if cell part of non-confirmed doublet change color to red

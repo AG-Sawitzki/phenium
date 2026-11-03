@@ -1,20 +1,27 @@
 import gc
 import math
-from copy import deepcopy
-from dataclasses import dataclass
+
+# from copy import deepcopy
+# from dataclasses import dataclass
 from functools import partial
-from itertools import chain, product
-from multiprocessing import Pool, cpu_count
+from itertools import (
+    # chain,
+    product,
+)
+from multiprocessing import (
+    Pool,
+    # cpu_count
+)
 from pathlib import Path, PurePath
 
 import anndata as ad
 import ants
 import geopandas as gpd
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import polars as pl
 import scanpy as sc
-import squidpy as sq
 import tifffile
 import tomlkit
 import torch
@@ -29,10 +36,12 @@ from shapely import transform
 from shapely.geometry import Point
 from skimage.transform import rescale
 
+from phenium.plot import polygon_overlay
 from phenium.segment import proseg_wrapper
 from phenium.utils import (
     bboxes_to_sections,
     boundaries_to_mask,
+    cell_contour,
     cell_loc,
     chunk_size,
     filter_by_location,
@@ -63,6 +72,7 @@ class IMG:
         "masks",
         "overview",
         "path",
+        "plgns",
         "reg_factor",
         "reg_fwd",
         "reg_inv",
@@ -241,7 +251,8 @@ class IMG:
         use_bfloat16=True,
         batch_size=8,
         resample=True,
-        channel_axis=0,
+        channel_axis=None,
+        z_axis=None,
         cellprob_threshold=0.0,
         do_3D=False,
         flow3D_smooth=0,
@@ -268,8 +279,12 @@ class IMG:
 
         if self.roi.ndim == 3:
             _c, y, x = self.roi.shape
+            channel_axis = 0
+            z_axis = None
         elif self.roi.ndim == 4:
             _z, _c, y, x = self.roi.shape
+            channel_axis = 1
+            z_axis = 0
         else:
             raise NotImplementedError("What is this shape?")
 
@@ -284,7 +299,9 @@ class IMG:
         vrlpy = max(0.05*y, 32)
         vrlpx = max(0.05*x, 32)
         all_masks = np.zeros((y, x), dtype=np.uint16)
+
         _ = torch.cuda.empty_cache()
+
         model = models.CellposeModel(
             gpu=gpu,
             pretrained_model=pretrained_model,
@@ -307,6 +324,7 @@ class IMG:
                 roi_chunk,
                 resample=resample,
                 channel_axis=channel_axis,
+                z_axis=z_axis,
                 cellprob_threshold=cellprob_threshold,
                 do_3D=do_3D,
                 flow3D_smooth=flow3D_smooth,
@@ -332,7 +350,7 @@ class IMG:
 
     def make_feature_matrix(
         self,
-        masks: ArrayLike = None,
+        masks: ArrayLike | None = None,
         tile_size: tuple[int, int] | int = 64,
     )-> None:
         if masks is None:
@@ -385,7 +403,7 @@ class IMG:
 
     def find_cell_loc(
         self,
-        masks: ArrayLike = None,
+        masks: ArrayLike | None = None,
         tile_size: tuple[int, int] | int = 64,
     ):
         if masks is None:
@@ -418,10 +436,41 @@ class IMG:
                 cell_ids = np.trim_zeros(np.unique(mask, sorted=True))
                 cell_ids_e = np.expand_dims(cell_ids, 1)
                 res = np.apply_along_axis(func, 1, cell_ids_e)
-                data[cell_ids] = res + [y_low, x_low]
-        self.cell_loc = data
+                data[cell_ids] = res + [x_low, y_low]
+        self.cell_loc = data.astype(np.int32)
         # pl.DataFrame(data=data, blah = ["centroid_x", "centroid_y"])
         gc.collect()
+
+    def find_cell_contour(
+        self,
+        masks: ArrayLike | None,
+        tile_size: int = 500,
+    ):
+        if masks is None:
+            masks = self.masks.copy()
+
+        if masks.ndim == 2:
+            y, x = masks.shape
+        else:
+            _, y, x = masks.shape
+
+        data = {'cell': [], 'geometry': []}
+        for cid, (x_c, y_c) in enumerate(self.cell_loc):
+            if cid != 0:
+                y_low = max(0, y_c - tile_size)
+                y_high = min(y, y_c + tile_size)
+                x_low = max(0, x_c - tile_size)
+                x_high = min(x, x_c + tile_size)
+
+                mask = masks[y_low:y_high, x_low:x_high]
+                func = partial(cell_contour, masks=mask)
+                plgn = func(cid)
+                plgn = transform(plgn, lambda x: x + [x_low, y_low])
+                data['cell'].append(cid)
+                data['geometry'].append(plgn)
+        self.plgns = gpd.GeoDataFrame(data)
+        gc.collect()
+
 
     def _anndata(self):
         """
@@ -446,18 +495,22 @@ class IMG:
             var=var,
             obsm=obsm
         )
-
+        gc.collect()
         return adata
 
     def cluster(
         self,
-        resolution=0.175,
-        return_copy=False
+        resolution: float = 0.175,
+        exclude: list[str, ...] | tuple[str, ...] | None = None,
+        return_copy: bool = False,
     ):
         self.make_feature_matrix()
         self.find_cell_loc()
 
         adata = self._anndata()
+
+        if exclude is not None:
+            adata = adata[:, ~adata.var_names.isin(exclude)].copy()
 
         adata = run_leiden(
             adata,
@@ -468,8 +521,22 @@ class IMG:
         )
 
         sc.tl.rank_genes_groups(adata, groupby="leiden")
-
+        gc.collect()
         self.adata = adata
+
+
+    def plot_segmentation(self, plgns: gpd.GeoDataFrame | None = None):
+        if plgns is None:
+            plgns = self.plgns
+        ax, fig = plt.subplots()
+        ax, fig = polygon_overlay(
+            polygons=plgns,
+            img=self.roi[0, ...],
+            ax=ax, fig=fig,
+            pxsize=self.pxsize[0]
+        )
+
+        return ax, fig
 
 
 class IST:
@@ -1006,32 +1073,32 @@ class Phenium:
     #         ).astype('category')
     #     )
 
+    def assign_celltype(
+        self,
+        cellid_celltype_dict
+    ):
+        ply_path = self.output_dir / "cell-polygon-layers.geojson.gz"
+        gdf = gpd.read_file(ply_path.as_uri().replace("file", "gzip"))
+
+        if cellid_celltype_dict is None:
+            oci_ci_dict = self.adata.obs.cell.to_dict()
+            oci_leiden_dict = self.adata.obs.leiden.to_dict()
+            cellid_celltype_dict = {
+                oci_ci_dict[oci]: oci_leiden_dict[oci] for oci in self.adata.obs_names
+            }
+        fltr = [idx in cellid_celltype_dict for idx in gdf.cell]
+        gdf = gdf[fltr]
+        gdf["celltype"] = gdf.apply(lambda row: cellid_celltype_dict[row.cell], axis=1)
+        return gdf
+
+
     def function_name(
         self,
         cellid_celltype_dict,
         prot_celltype_dict,
         verbose: bool = True,
     ):
-        ply_path = self.output_dir / 'cell-polygon-layers.geojson.gz'
-        gdf = gpd.read_file(
-                ply_path.as_uri().replace('file', 'gzip')
-            )
-
-        if cellid_celltype_dict is None:
-            oci_ci_dict = self.adata.obs.cell.to_dict()
-            oci_leiden_dict = self.adata.obs.leiden.to_dict()
-            cellid_celltype_dict = {
-                oci_ci_dict[oci]: oci_leiden_dict[oci]
-                for oci in self.adata.obs_names
-            }
-        fltr = [
-            idx in cellid_celltype_dict for idx in gdf.cell
-        ]
-        gdf = gdf[fltr]
-        gdf['celltype'] = gdf.apply(
-            lambda row: cellid_celltype_dict[row.cell],
-            axis=1
-        )
+        gdf = self.assign_celltype(cellid_celltype_dict)
 
         if prot_celltype_dict is None:
             prot_celltype_dict = dict(zip(
@@ -1048,6 +1115,7 @@ class Phenium:
         )
 
         gc.collect()
+
         if verbose:
             pbar = tqdm.tqdm(total=len(prot_celltype_dict.keys()))
         for prot, celltypes in prot_celltype_dict.items():

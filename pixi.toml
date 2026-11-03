@@ -19,6 +19,7 @@ pandas = ">2.0,<3.0"
 
 [dependencies]
 python = ">=3.12"
+ipython = "*"
 # phenium = { path = "./phenium/" }
 
 [target.lida.dependencies]

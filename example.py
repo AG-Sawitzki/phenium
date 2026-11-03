@@ -1,4 +1,6 @@
 import os
+import timeit
+from pathlib import Path
 
 os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = "16"
 
@@ -29,14 +31,28 @@ ana = Phenium(
 
 ana.prepare(4, 12, verbose=True)
 
+exclude = [
+    'DAPI',
+    'CD96',
+    'CD206',
+    'TCRgd',
+    'CD16',
+    'Osteopontin',
+    'FOXP3',
+    'CD11c',
+    'CD36',
+    'CD62L',
+    'TCRab'
+]
+
 if prior_type != "CP":
     ana.IHC.segment()
-    ana.IHC.cluster(resolution=0.175)
-    save_anndata(ana.IHC.adata, prefix="IHC", output_dir=output_dir)
+    ana.IHC.cluster(resolution=0.175, exclude=exclude)
+    save_anndata(ana.IHC.adata, prefix="IHC", output_dir=Path(output_dir))
 else:
     if ana.CP_params['style'] == 'pheno':
-        ana.IHC.cluster(resolution=0.175)
-        save_anndata(ana.IHC.adata, prefix="IHC", output_dir=output_dir)
+        ana.IHC.cluster(resolution=0.175, exclude=exclude)
+        save_anndata(ana.IHC.adata, prefix="IHC", output_dir=Path(output_dir))
 
 ana.run_proseg()
 
@@ -51,7 +67,7 @@ doublets = vrlp.detect_doublets(
     integrity_sigma=2
 )
 
-masks = io.load_plgns(output_dir / "cell-polygon-layers.geojson.gz")
+masks = io.load_plgns(Path(output_dir) / "cell-polygon-layers.geojson.gz")
 
 success_rate, stuff = analysis.vis_doublets(
     doublets,
