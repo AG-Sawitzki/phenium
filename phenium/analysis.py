@@ -1,4 +1,4 @@
-import matplotlib.pyplot as plt
+import numpy as np
 import ovrlpy
 from shapely import Point
 
@@ -98,3 +98,25 @@ def verify_doublets(adata, stuff):
         # if two different cells ovrelap then 
             # check if off different celltype
 
+
+def foo(row, gdf, midx):
+    idx, (_oidx, cell, layer, geom) = row
+    low = max(0, idx-25)
+    high = min(idx+25, midx)
+    gdf = gdf.iloc[low:high]
+    fltr = gdf.intersects(geom)
+    vrlps = gdf[fltr]
+    cell_fltr = vrlps.cell != cell
+    doublets = vrlps[cell_fltr]
+    return {cell: {layer: list(doublets.cell)}}
+
+
+def proseg_doublets(gdf):
+    other_stuff = {}
+    sjnd = gdf.sjoin(gdf, how='inner', predicate='intersects')
+    vrlps = sjnd[sjnd.cell_left != sjnd.cell_right]
+    cids = set(vrlps.cell_left)
+    for cid in cids:
+        other_stuff[cid] = list(set(vrlps[vrlps.cell_left == cid].cell_right))
+    return other_stuff
+    # for cell check if any layer overlaps with any other cell

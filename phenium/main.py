@@ -28,6 +28,8 @@ import torch
 import tqdm
 import zarr
 from cellpose import models
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 from numpy.typing import ArrayLike
 from scipy import stats
 from scipy.io import loadmat, mmread
@@ -36,6 +38,7 @@ from shapely import transform
 from shapely.geometry import Point
 from skimage.transform import rescale
 
+from phenium.io import save_anndata
 from phenium.plot import polygon_overlay
 from phenium.segment import proseg_wrapper
 from phenium.utils import (
@@ -50,7 +53,6 @@ from phenium.utils import (
     get_pixel_size,
     relative,
     run_leiden,
-    save_anndata,
     scale_coords,
     transform_image,
     value_at_cell,
@@ -68,6 +70,7 @@ class IMG:
         "adata",
         "affine_transform",
         "cell_loc",
+        "exclude",
         "feature_matrix",
         "masks",
         "overview",
@@ -83,8 +86,20 @@ class IMG:
     def __init__(
         self,
         path,
+        exclude: list[(str | int), ...] | None = None
     ):
         self.path = Path(path)
+
+        if not isinstance(exclude, list):
+            exclude = list(exclude)
+        if isinstance(exclude[0], str):
+            exclude = [
+                self.all_biomarkers[e] for e in exclude if e in self.all_biomarkers
+            ]
+
+        self.selection = (
+            c for c in self.all_biomarkers if c not in exclude
+        )
         store = tifffile.imread(self.path, aszarr=True)
         self.zrr = zarr.open(store, mode="r")
 
@@ -103,8 +118,20 @@ class IMG:
         return len(self.zrr)
 
     @property
+    def axes(self):
+        with tifffile.TiffFile(self.path) as tif:
+            axes = tif.series[0].axes
+        x = axes.index('X')
+        y = axes.index('Y')
+        c = axes.index('C') if 'C' in axes else None
+        z = axes.index('Z') if 'Z' in axes else None
+        t = axes.index('T') if 'T' in axes else None
+        axes = {'x': x, 'y': y, 'c': c, 'z': z, 't': t}
+        return axes
+
+    @property
     def shape(self):
-        return self.zrr['0'].shape            
+        return self.zrr['0'].shape
 
     @property
     def pxsize(self):
@@ -122,12 +149,24 @@ class IMG:
         coords = self.sections[section]
         x = coords["x"]
         y = coords["y"]
-        self._roi = self.zrr["0"][:, y[0]:y[1], x[0]:x[1]]
+        _roi = self.zrr["0"][self.selection, y[0]:y[1], x[0]:x[1]]
+
 
     @property
-    def biomarkers(self):
+    def all_biomarkers(self):
         biomarkers = get_biomarkers(self.path)
         return biomarkers
+
+    @property
+    def roi_biomarkers(self):
+        biomarkers = {
+            k: v for k, v in self.biomarkers.items() if v in self.selection
+        }
+        biomarkers = {
+            k: v for v, k in enumerate(biomarkers.keys())
+        }
+        return biomarkers
+
 
     def find_affine(
         self,
@@ -193,7 +232,7 @@ class IMG:
         """
         Adjusts the roi to fit the input image from `find_affine`.
         """
-        iterations = list(self.biomarkers.values())
+        iterations = list(self.roi_biomarkers.values())
         moving = self.roi.copy() if parallel else self.roi
         # self._roi_adj = np.zeros((len(iterations),)+fixed.shape)
         imgs = []
@@ -263,11 +302,15 @@ class IMG:
         tile_overlap=0.1,
         compute_masks=True,
     ):
+
+        if not isinstance(channels, list):
+            channels = list(channels)
+
         if isinstance(channels[0], int):
             pass
         elif isinstance(channels[0], str):
             channels = tuple(
-                self.biomarkers[c] for c in channels
+                self.roi_biomarkers[c] for c in channels
             )
         else:
             raise TypeError(
@@ -352,6 +395,7 @@ class IMG:
         self,
         masks: ArrayLike | None = None,
         tile_size: tuple[int, int] | int = 64,
+        verbose: bool = False,
     )-> None:
         if masks is None:
             masks = self.masks.copy()
@@ -370,81 +414,98 @@ class IMG:
         else:
             x_size = y_size = tile_size
 
-        x_range = range(
-            0,
-            int(x - math.fmod(x, x_size)),
-            x_size
-        )
-        y_range = range(
-            0,
-            int(y - math.fmod(y, y_size)),
-            y_size
-        )
+        
+        x_range = range(0, int(x - math.fmod(x, x_size)), x_size)
+        y_range = range(0, int(y - math.fmod(y, y_size)), y_size)
         grid = product(y_range, x_range)
-        data = np.zeros((np.max(masks)+1, len(self.biomarkers)))
+        dense_fmatrix = np.zeros((np.max(masks)+1, len(self.roi_biomarkers)))
+        cell_locs = np.zeros((np.max(masks) + 1, 2))
+
+        if verbose:
+            pbar = tqdm.tqdm(total=(len(x_range) * len(y_range)))
         for (y_c, x_c) in grid:
             y_low = y_c
             y_high = y_c + y_size
             x_low = x_c
             x_high = x_c + x_size
 
-            roi = self.roi[:, y_low:y_high, x_low:x_high]
             mask = masks[y_low:y_high, x_low:x_high]
-            func = partial(value_at_cell, masks=mask, roi=roi)
 
             if np.count_nonzero(mask) > 0:
+                roi = self.roi[:, y_low:y_high, x_low:x_high]
+                func_fm = partial(value_at_cell, masks=mask, roi=roi)
+                func_loc = partial(cell_loc, masks=mask)
+
                 cell_ids = np.trim_zeros(np.unique(mask, sorted=True))
                 cell_ids_e = np.expand_dims(cell_ids, 1)
-                res = np.apply_along_axis(func, 1, cell_ids_e)
-                data[cell_ids] += res
-        feature_matrix = csr_matrix(data)
-        self.feature_matrix = feature_matrix
+
+                res_fm = np.apply_along_axis(func_fm, 1, cell_ids_e)
+                res_loc = np.apply_along_axis(func_loc, 1, cell_ids_e)
+
+                dense_fmatrix[cell_ids] += res_fm
+                cell_locs[cell_ids] = res_loc + [x_low, y_low]
+
+                if verbose:
+                    pbar.update(1)
+
+        if verbose:
+            pbar.close(1)
+        self.feature_matrix = csr_matrix(dense_fmatrix)
+        self.cell_loc = cell_locs.astype(np.int32)
         gc.collect()
 
-    def find_cell_loc(
-        self,
-        masks: ArrayLike | None = None,
-        tile_size: tuple[int, int] | int = 64,
-    ):
-        if masks is None:
-            masks = self.masks.copy()
+    # def find_cell_loc(
+    #     self,
+    #     masks: ArrayLike | None = None,
+    #     tile_size: tuple[int, int] | int = 64,
+    #     verbose: bool = False
+    # ):
+    #     if masks is None:
+    #         masks = self.masks.copy()
 
-        if masks.ndim == 2:
-            y, x = masks.shape
-        else:
-            _, y, x = masks.shape
+    #     if masks.ndim == 2:
+    #         y, x = masks.shape
+    #     else:
+    #         _, y, x = masks.shape
 
-        if isinstance(tile_size, tuple):
-            x_size, y_size = tile_size
-        else:
-            x_size = y_size = tile_size
+    #     if isinstance(tile_size, tuple):
+    #         x_size, y_size = tile_size
+    #     else:
+    #         x_size = y_size = tile_size
 
-        x_range = range(0, int(x - math.fmod(x, x_size)), x_size)
-        y_range = range(0, int(y - math.fmod(y, y_size)), y_size)
-        grid = product(y_range, x_range)
-        data = np.zeros((np.max(masks) + 1, 2))
-        for y_c, x_c in grid:
-            y_low = y_c
-            y_high = y_c + y_size
-            x_low = x_c
-            x_high = x_c + x_size
+    #     x_range = range(0, int(x - math.fmod(x, x_size)), x_size)
+    #     y_range = range(0, int(y - math.fmod(y, y_size)), y_size)
+    #     grid = product(y_range, x_range)
+    #     data = np.zeros((np.max(masks) + 1, 2))
+    #     if verbose:
+    #         pbar = tqdm.tqdm(total=(len(x_range)*len(y_range)))
+    #     for y_c, x_c in grid:
+    #         y_low = y_c
+    #         y_high = y_c + y_size
+    #         x_low = x_c
+    #         x_high = x_c + x_size
 
-            mask = masks[y_low:y_high, x_low:x_high]
-            func = partial(cell_loc, masks=mask)
+    #         mask = masks[y_low:y_high, x_low:x_high]
+    #         func = partial(cell_loc, masks=mask)
 
-            if np.count_nonzero(mask) > 0:
-                cell_ids = np.trim_zeros(np.unique(mask, sorted=True))
-                cell_ids_e = np.expand_dims(cell_ids, 1)
-                res = np.apply_along_axis(func, 1, cell_ids_e)
-                data[cell_ids] = res + [x_low, y_low]
-        self.cell_loc = data.astype(np.int32)
-        # pl.DataFrame(data=data, blah = ["centroid_x", "centroid_y"])
-        gc.collect()
+    #         if np.count_nonzero(mask) > 0:
+    #             cell_ids = np.trim_zeros(np.unique(mask, sorted=True))
+    #             cell_ids_e = np.expand_dims(cell_ids, 1)
+    #             res = np.apply_along_axis(func, 1, cell_ids_e)
+    #             data[cell_ids] = res + [x_low, y_low]
+    #             if verbose:
+    #                 pbar.update(1)
+    #     if verbose:
+    #         pbar.close(1)
+    #     self.cell_loc = data.astype(np.int32)
+    #     # pl.DataFrame(data=data, blah = ["centroid_x", "centroid_y"])
+    #     gc.collect()
 
     def find_cell_contour(
         self,
-        masks: ArrayLike | None,
-        tile_size: int = 500,
+        masks: ArrayLike | None = None,
+        tile_size: int = 64,
+        verbose: bool = False,
     ):
         if masks is None:
             masks = self.masks.copy()
@@ -455,6 +516,8 @@ class IMG:
             _, y, x = masks.shape
 
         data = {'cell': [], 'geometry': []}
+        if verbose:
+            pbar = tqdm.tqdm(total=len(self.cell_loc))
         for cid, (x_c, y_c) in enumerate(self.cell_loc):
             if cid != 0:
                 y_low = max(0, y_c - tile_size)
@@ -468,6 +531,10 @@ class IMG:
                 plgn = transform(plgn, lambda x: x + [x_low, y_low])
                 data['cell'].append(cid)
                 data['geometry'].append(plgn)
+                if verbose:
+                    pbar.update(1)
+        if verbose:
+            pbar.close()
         self.plgns = gpd.GeoDataFrame(data)
         gc.collect()
 
@@ -480,7 +547,7 @@ class IMG:
 
         rows, _ = counts.shape
         obs = np.arange(rows).tolist()
-        var = list(self.biomarkers.keys())
+        var = list(self.roi_biomarkers.keys())
 
         obs = pd.DataFrame({'cell':obs})
         var = pd.DataFrame({'protein':var})
@@ -505,11 +572,11 @@ class IMG:
         return_copy: bool = False,
     ):
         self.make_feature_matrix()
-        self.find_cell_loc()
+        # self.find_cell_loc()
 
         adata = self._anndata()
 
-        if exclude is not None:
+        if exclude is not None and isinstance(exclude, (tuple, list)):
             adata = adata[:, ~adata.var_names.isin(exclude)].copy()
 
         adata = run_leiden(
@@ -525,18 +592,38 @@ class IMG:
         self.adata = adata
 
 
-    def plot_segmentation(self, plgns: gpd.GeoDataFrame | None = None):
+    def plot_segmentation(
+        self,
+        plgns: gpd.GeoDataFrame | None = None,
+        channels: list[(str | int), ...] = 0
+    )-> tuple[Figure, Axes]:
         if plgns is None:
             plgns = self.plgns
-        ax, fig = plt.subplots()
-        ax, fig = polygon_overlay(
+
+        if not isinstance(channels, list):
+            channels = list(channels)
+
+        if isinstance(channels[0], int):
+            pass
+        elif isinstance(channels[0], str):
+            channels = tuple(
+                self.roi_biomarkers[c] for c in channels
+            )
+        else:
+            raise TypeError(
+                "`channels` has wrong type: \n"
+                f"\t {type(channels[0])}"
+            )
+
+        fig, ax = plt.subplots()
+        fig, ax = polygon_overlay(
             polygons=plgns,
-            img=self.roi[0, ...],
+            img=self.roi[channels, ...],
             ax=ax, fig=fig,
             pxsize=self.pxsize[0]
         )
 
-        return ax, fig
+        return fig, ax
 
 
 class IST:
@@ -738,6 +825,7 @@ class Phenium:
         machine: str = 'xenium',
         prior_type: str = '',
         channels: tuple = (None, None),
+        exclude: list[(str | int), ...] | None = None,
         cell_size: int = 5,
         seed: int| None = None,
     )-> None:
@@ -763,7 +851,7 @@ class Phenium:
             self.XMI.overview
         )
 
-        self.IHC = IMG(self.IHC_path)
+        self.IHC = IMG(self.IHC_path, exclude=exclude)
         tifffile.imwrite(
             self.output_dir / 'IHC_overview.png',
             self.IHC.overview
@@ -1091,48 +1179,45 @@ class Phenium:
         gdf["celltype"] = gdf.apply(lambda row: cellid_celltype_dict[row.cell], axis=1)
         return gdf
 
-
     def function_name(
         self,
         cellid_celltype_dict,
-        prot_celltype_dict,
+        celltype_prot_dict,
         verbose: bool = True,
     ):
         gdf = self.assign_celltype(cellid_celltype_dict)
 
-        if prot_celltype_dict is None:
-            prot_celltype_dict = dict(zip(
-                self.IHC.biomarkers,
-                np.random.randint(
-                    0,
-                    len(self.adata.uns['leiden_colors']),
-                    size=len(self.IHC.biomarkers))
-            ))
+        if celltype_prot_dict is None:
+            celltype_prot_dict = dict(
+                zip(
+                    np.random.randint(
+                        0,
+                        len(self.adata.uns["leiden_colors"]),
+                        size=len(self.IHC.roi_biomarkers),
+                    ).astype(str),
+                    self.IHC.roi_biomarkers
+                )
+            )
 
         new_img = np.zeros(
-            (len(self.IHC.biomarkers), self.layers,)
+            (
+                len(self.IHC.roi_biomarkers),
+                self.layers,
+            )
             + self.XMI.roi.shape[1:]
         )
 
         gc.collect()
 
         if verbose:
-            pbar = tqdm.tqdm(total=len(prot_celltype_dict.keys()))
-        for prot, celltypes in prot_celltype_dict.items():
-            index = self.IHC.biomarkers[prot]
-            channel = self.IHC.roi[index, :, :]
-            if not isinstance(celltypes, list | tuple):
-                celltypes = [celltypes]
-            for celltype in celltypes:
-                cells = gdf.loc[gdf.celltype == celltype]
-                coords = np.argwhere(channel > 0)
-                for coord in coords:
-                    pnkt = transform(Point(coord), lambda x: x/self.XMI.pxsize[0])
-                    mask = cells.contains(pnkt)
-                    if mask.any():
-                        layers = set(cells.loc[cells.loc[mask]]['layer'])
-                        new_value = channel[tuple(coord)]/len(layers)
-                        new_img[index, tuple(layers), coord] = new_value
+            pbar = tqdm.tqdm(total=len(celltype_prot_dict.keys()))
+        for _idx, (cell, layer, geom, celltype) in gdf.iterrows():
+            x_low, y_low, x_high, y_high = geom.bounds
+            channels = tuple(
+                int(self.IHC.roi_biomarkers[c]) for c in celltype_prot_dict[celltype]
+            )
+            img = self.IHC.roi[channels, x_low:x_high, y_low:y_high]
+            new_img[channels, layer, x_low:x_high, y_low:y_high] = img
             if verbose:
                 pbar.update(1)
         if verbose:

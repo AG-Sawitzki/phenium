@@ -11,7 +11,6 @@ install(show_locals=True)
 import tifffile
 from phenium import analysis, io
 from phenium.main import Phenium
-from phenium.utils import save_anndata
 
 xenium_dir = "/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260827__133139__20260827_ITCAIM_lung-spleen_run4/output-XETG00410__0065619__non_infected_lung__20260827__133207"
 pheno_img = "/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260902_ITCAIM_Phenium_Slide8/Scan1/20260902_ITCAIM_Phenium_Slide8_Scan1.er.qptiff"
@@ -19,6 +18,18 @@ output_dir = "/data/cephfs-1/scratch/projects/sawitzki-phenium"
 config_path = "/data/cephfs-2/unmirrored/projects/sawitzki-phenium/phenium/config.toml"
 prior_type = "CP"
 channels = ("DAPI", "CD45")
+exclude = [
+    "CD69",
+    "CD206",
+    "TCRgd",
+    "CD16",
+    "Osteopontin",
+    "FoxP3",
+    "CD11c",
+    "CD36",
+    "CD62L",
+    "TCRab",
+]
 
 ana = Phenium(
     SRT_dir=xenium_dir,
@@ -27,32 +38,25 @@ ana = Phenium(
     config_path=config_path,
     prior_type=prior_type,
     channels=channels,
+    exclude=exclude
 )
 
 ana.prepare(4, 12, verbose=True)
 
-exclude = [
-    'DAPI',
-    'CD96',
-    'CD206',
-    'TCRgd',
-    'CD16',
-    'Osteopontin',
-    'FOXP3',
-    'CD11c',
-    'CD36',
-    'CD62L',
-    'TCRab'
-]
+ana.IHC.cluster(resolution=0.175, exclude=["DAPI"])
+io.save_anndata(ana.IHC.adata, prefix="IHC", output_dir=Path(output_dir))
+ana.IHC.find_cell_contour(verbose=True)
+fig, ax = ana.IHC.plot_segmentation(channels=channels)
+fig.savefig(ana.output_dir / 'IHC_CP_seg_on_IHC-DAPI.pdf')
 
-if prior_type != "CP":
-    ana.IHC.segment()
-    ana.IHC.cluster(resolution=0.175, exclude=exclude)
-    save_anndata(ana.IHC.adata, prefix="IHC", output_dir=Path(output_dir))
-else:
-    if ana.CP_params['style'] == 'pheno':
-        ana.IHC.cluster(resolution=0.175, exclude=exclude)
-        save_anndata(ana.IHC.adata, prefix="IHC", output_dir=Path(output_dir))
+# if prior_type != "CP":
+#     ana.IHC.segment()
+#     ana.IHC.cluster(resolution=0.175, exclude=exclude)
+#     io.save_anndata(ana.IHC.adata, prefix="IHC", output_dir=Path(output_dir))
+# else:
+#     if ana.CP_params['style'] == 'pheno':
+#         ana.IHC.cluster(resolution=0.175, exclude=exclude)
+#         io.save_anndata(ana.IHC.adata, prefix="IHC", output_dir=Path(output_dir))
 
 ana.run_proseg()
 
@@ -74,6 +78,7 @@ success_rate, stuff = analysis.vis_doublets(
     masks,
 )
 
+other_stuff = analysis.proseg_doublets(masks)
 
 new_img = ana.function_name(None, None)
 

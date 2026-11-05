@@ -485,21 +485,42 @@ def cell_loc(
         _, x = masks.shape
         fltr = masks == cell_id
         idx = np.argmax(fltr)
-        loc = np.array([math.fmod(idx, x), math.floor(idx / x)])
-        return loc
+        return np.array([math.fmod(idx, x), math.floor(idx / x)])
 
 
+# modified `get_outline_multi` from cellpose.utils
 def cell_contour(
     cell_id,
     masks,
 ):
+    """
+    Get the outline of a specific mask in a multi-mask image.
+
+    Parameters
+    ----------
+        cell_id : int
+            identification of the mask to find the outline of
+        masks : np.ndarray
+            Array containing at least the entire mask of `cell_id`.
+
+    Returns
+    -------
+        out : shapely.Polygon
+            A shapely polygon of the outline (x, y).
+    """
     if cell_id != 0:
-        fltr = masks == cell_id
-        if np.count_nonzero(fltr) > 3:
-            cntr = sobel(fltr)
-            y, x = np.nonzero(cntr)
-            if len(y) > 3 & len(x) > 3:
-                return Polygon(x, y)
+        bmask = masks == cell_id
+        if bmask.sum() > 3:
+            cntrs = cv2.findContours(
+                bmask.astype(np.uint8),
+                mode=cv2.RETR_EXTERNAL,
+                method=cv2.CHAIN_APPROX_NONE,
+            )
+            cntrs = cntrs[-2]
+            cmax = np.argmax([c.shape[0] for c in cntrs])
+            pix = cntrs[cmax].astype(int).squeeze()
+            if len(pix) > 4:
+                return Polygon(zip(pix[:, 1], pix[:, 0]))
 
 
 def _draw_mask(
@@ -692,8 +713,8 @@ def get_biomarkers(img_path):
                             )
                         break
 
-    if len(biomarkers) != len(pages):
-        print('Not all channels have a biomarker.')
+        if len(biomarkers) != len(pages):
+            print('Not all channels have a biomarker.')
 
     return biomarkers
 

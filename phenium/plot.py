@@ -26,18 +26,24 @@ def polygon_overlay(
 ) -> tuple[Axes, Figure]:
     gdf = deepcopy(polygons)
 
-    if not isinstance(img, np.ndarray) & isinstance(img, str | PurePath):
+    if (not isinstance(img, np.ndarray)) & (isinstance(img, str | PurePath)):
         img = tifffile.imread(img)
 
     assert type(img) is np.ndarray, f"Img has type {type(img)}."
     assert type(gdf) is gpd.GeoDataFrame, f"Polygons has {type(gdf)}."
 
-    img_norm = (img - img.min()) / (img.max() - img.min())
+    # img_norm = (img - img.min()) / (img.max() - img.min())
+    img_norm = img
 
-    plt.style.use("./segmentstyle.mplstyle")
+    # plt.style.use("./segmentstyle.mplstyle")
 
     fz = 24
-    dimy, dimx, _ = img.shape
+    if img.ndim == 2:
+        dimy, dimx = img.shape
+    elif img.ndim == 3:
+        _, dimy, dimx = img.shape
+    else:
+        dimy, dimx, *_ = img.shape
 
     # fig.set_frameon(False)
     fig.set_size_inches(dimy / 100, dimx / 100)
@@ -65,27 +71,31 @@ def polygon_overlay(
     ax.set_xlim(0, dimx)
     ax.set_ylim(dimy, 0)
 
-    img_norm_m = np.moveaxis(img_norm, -1, 0)
+    if img.ndim == 3:
+        img_norm_m = np.moveaxis(img_norm, -1, 0)
+        images = [img for img in img_norm_m]
 
-    images = [
-        img_norm_m[0, ...],
-        img_norm_m[1, ...],
-        img_norm_m[2, ...],
-        img_norm_m[3, ...],
-    ]
-
-    _microim = microshow(
-        images=images,
-        cmaps=["blue", "cyan", "magenta", "yellow"],
-        ax=ax,
-        limits=[img_norm_m.min(), img_norm_m.max()],
-        show_axis=True,
-    )
+        _microim = microshow(
+            images=images,
+            cmaps=["blue", "cyan", "magenta", "yellow"],
+            ax=ax,
+            limits=[img_norm_m.min(), img_norm_m.max()],
+            show_axis=True,
+        )
+    else:
+        images = [img]
+        _microim = microshow(
+            images=images,
+            cmaps=["blue"],
+            ax=ax,
+            limits=[img_norm.min(), img_norm.max()],
+            show_axis=True,
+        )
 
     gdf.boundary.plot(ax=ax, aspect="equal", color="white")
     fig.tight_layout()
     # fig.savefig(Path(output_path), bbox_inches="tight", pad_inches=0.0)
-    return tuple(ax, fig)
+    return fig, ax
 
 
 def scatter_doublets(

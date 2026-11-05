@@ -1,3 +1,4 @@
+import pickle
 from pathlib import PurePath
 
 import anndata as ad
@@ -7,6 +8,17 @@ import scanpy as sc
 import squidpy as sq
 
 from phenium.exceptions import NotImplemented
+
+
+def save_phenium(obj, file):
+    with open(file, 'wb') as outp:
+        pickle.dump(obj, outp, pickle.DEFAULT_PROTOCOL)
+
+
+def load_phenium(file):
+    with open(file, 'rb') as inp:
+        ana = pickle.load(inp)
+    return ana
 
 
 def load_plgns(path):
@@ -34,9 +46,9 @@ def save_anndata(
             color="leiden",
             legend_loc="on data",
             show=False,
-        ).figure.savefig(ad_dir / "plots/knn_umap_leiden.pdf")
+        ).figure.savefig(ad_dir / "knn_umap_leiden.pdf")
         print("umap saved.")
-    except:
+    except KeyError:
         print("no leiden")
 
     try:
@@ -57,7 +69,7 @@ def save_anndata(
         pdf = pl.concat(temp_pdf_list)
         pdf.write_csv(ad_dir / "ranked_genes.csv")
         print("ranked csv saved.")
-    except:
+    except KeyError:
         print("no ranking data.")
 
     try:
@@ -71,7 +83,7 @@ def save_anndata(
             figsize=(12, 6),
         )["mainplot_ax"].figure.savefig(ad_dir / "ranked_genes_dotplot.pdf")
         print("ranked dotplot saved.")
-    except:
+    except TypeError:
         print("no ranking data.")
 
     try:
@@ -84,5 +96,5 @@ def save_anndata(
             save=(ad_dir / "spatial_scatter_leiden.pdf"),
         )
         print("spatial scatter saved")
-    except:
-        print("no spatial data.")
+    except KeyError:
+        print("no spatial data or leiden")
