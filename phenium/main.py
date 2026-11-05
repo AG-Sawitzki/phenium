@@ -70,7 +70,6 @@ class IMG:
         "adata",
         "affine_transform",
         "cell_loc",
-        "exclude",
         "feature_matrix",
         "masks",
         "overview",
@@ -81,6 +80,7 @@ class IMG:
         "reg_inv",
         "reg_shape",
         "sections",
+        "selection",
         "zrr"
     ]
     def __init__(
@@ -91,15 +91,14 @@ class IMG:
         self.path = Path(path)
 
         if not isinstance(exclude, list):
-            exclude = list(exclude)
-        if isinstance(exclude[0], str):
-            exclude = [
-                self.all_biomarkers[e] for e in exclude if e in self.all_biomarkers
-            ]
+            exclude = [exclude]
+        
+        self.selection = [
+            c for k, c in self.all_biomarkers.items() if (
+                (c not in exclude) & (k not in exclude)
+            )
+        ]
 
-        self.selection = (
-            c for c in self.all_biomarkers if c not in exclude
-        )
         store = tifffile.imread(self.path, aszarr=True)
         self.zrr = zarr.open(store, mode="r")
 
@@ -307,11 +306,11 @@ class IMG:
             channels = list(channels)
 
         if isinstance(channels[0], int):
-            pass
+            list(channels)
         elif isinstance(channels[0], str):
-            channels = tuple(
+            channels = [
                 self.roi_biomarkers[c] for c in channels
-            )
+            ]
         else:
             raise TypeError(
                 "`channels` has wrong type: \n"
