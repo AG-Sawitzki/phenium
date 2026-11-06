@@ -105,6 +105,8 @@ def func_name(gdf, roi, tile_size, biomarkers, celltype_prot_dict):
         + roi.shape[~1:]
     )
     for (y_c, x_c) in grid:
+        print('y: ', y_c)
+        print('x: ', x_c)
         y_low, y_high = y_c, y_c + y_size
         x_low, x_high = x_c, x_c + x_size
         plgn = Polygon([
@@ -113,6 +115,7 @@ def func_name(gdf, roi, tile_size, biomarkers, celltype_prot_dict):
             (x_low, y_low)
         ])
         sub = gdf[gdf.geometry.intersects(plgn)]
+        print("pre apply: ", roi[:, y_low:y_high, x_low:x_high].sum())
         if sub.size > 0:
             bnds = sub.bounds.astype(int)
             bnds['i'] = sub.index
