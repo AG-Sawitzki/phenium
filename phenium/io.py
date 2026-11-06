@@ -1,5 +1,5 @@
 import pickle
-from pathlib import PurePath
+from pathlib import Path, PurePath
 
 import anndata as ad
 import geopandas as gpd
@@ -22,6 +22,9 @@ def load_phenium(file):
 
 
 def load_plgns(path):
+    assert isinstance(path, PurePath | str), "path must be str or PurePath!"
+    if isinstance(path, str):
+        path = Path(path)
     if path.suffix == '.gz':
         path = path.as_uri().replace('file', 'gzip')
 

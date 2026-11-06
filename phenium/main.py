@@ -47,6 +47,7 @@ from phenium.utils import (
     cell_contour,
     cell_loc,
     chunk_size,
+    denoise_image,
     filter_by_location,
     find_rois,
     get_biomarkers,
@@ -148,8 +149,7 @@ class IMG:
         coords = self.sections[section]
         x = coords["x"]
         y = coords["y"]
-        _roi = self.zrr["0"][self.selection, y[0]:y[1], x[0]:x[1]]
-
+        self._roi = self.zrr["0"][self.selection, y[0]:y[1], x[0]:x[1]]
 
     @property
     def all_biomarkers(self):
@@ -159,7 +159,7 @@ class IMG:
     @property
     def roi_biomarkers(self):
         biomarkers = {
-            k: v for k, v in self.biomarkers.items() if v in self.selection
+            k: v for k, v in self.all_biomarkers.items() if v in self.selection
         }
         biomarkers = {
             k: v for v, k in enumerate(biomarkers.keys())
@@ -231,6 +231,7 @@ class IMG:
         """
         Adjusts the roi to fit the input image from `find_affine`.
         """
+        _ = torch.cuda.empty_cache()
         iterations = list(self.roi_biomarkers.values())
         moving = self.roi.copy() if parallel else self.roi
         # self._roi_adj = np.zeros((len(iterations),)+fixed.shape)
@@ -452,53 +453,6 @@ class IMG:
         self.feature_matrix = csr_matrix(dense_fmatrix)
         self.cell_loc = cell_locs.astype(np.int32)
         gc.collect()
-
-    # def find_cell_loc(
-    #     self,
-    #     masks: ArrayLike | None = None,
-    #     tile_size: tuple[int, int] | int = 64,
-    #     verbose: bool = False
-    # ):
-    #     if masks is None:
-    #         masks = self.masks.copy()
-
-    #     if masks.ndim == 2:
-    #         y, x = masks.shape
-    #     else:
-    #         _, y, x = masks.shape
-
-    #     if isinstance(tile_size, tuple):
-    #         x_size, y_size = tile_size
-    #     else:
-    #         x_size = y_size = tile_size
-
-    #     x_range = range(0, int(x - math.fmod(x, x_size)), x_size)
-    #     y_range = range(0, int(y - math.fmod(y, y_size)), y_size)
-    #     grid = product(y_range, x_range)
-    #     data = np.zeros((np.max(masks) + 1, 2))
-    #     if verbose:
-    #         pbar = tqdm.tqdm(total=(len(x_range)*len(y_range)))
-    #     for y_c, x_c in grid:
-    #         y_low = y_c
-    #         y_high = y_c + y_size
-    #         x_low = x_c
-    #         x_high = x_c + x_size
-
-    #         mask = masks[y_low:y_high, x_low:x_high]
-    #         func = partial(cell_loc, masks=mask)
-
-    #         if np.count_nonzero(mask) > 0:
-    #             cell_ids = np.trim_zeros(np.unique(mask, sorted=True))
-    #             cell_ids_e = np.expand_dims(cell_ids, 1)
-    #             res = np.apply_along_axis(func, 1, cell_ids_e)
-    #             data[cell_ids] = res + [x_low, y_low]
-    #             if verbose:
-    #                 pbar.update(1)
-    #     if verbose:
-    #         pbar.close(1)
-    #     self.cell_loc = data.astype(np.int32)
-    #     # pl.DataFrame(data=data, blah = ["centroid_x", "centroid_y"])
-    #     gc.collect()
 
     def find_cell_contour(
         self,
@@ -869,6 +823,9 @@ class Phenium:
 
     @property
     def prior_path(self):
+        """
+        Path to the prior. Set after computing it.
+        """
         try:
             return self._prior_path
         except AttributeError:
@@ -880,6 +837,9 @@ class Phenium:
 
     @property
     def layers(self):
+        """
+        Layers defined in the transcriptomics by `cell_size`.
+        """
         z_bounds = self.IST.z_bounds
         diff = z_bounds[1]-z_bounds[0]
         layers = int(diff/self.cell_size * 3)
@@ -890,14 +850,23 @@ class Phenium:
 
     @property
     def CP_params(self):
+        """
+        Parameters for the CellPose model and evaluation.
+        """
         return self.config['cellpose']
 
     @property
     def PS_params(self):
+        """
+        Parameters for the ProSeg simulation.
+        """
         return self.config['proseg']
 
     @property
     def SRT_section(self):
+        """
+        Section in the spatially resolved transcriptomics image.
+        """
         try:
             return self._SRT_section
         except AttributeError:
@@ -909,6 +878,9 @@ class Phenium:
 
     @property
     def IHC_section(self):
+        """
+        Section in the immuno histo chemistry image.
+        """
         try:
             return self._IHC_section
         except AttributeError:
@@ -922,8 +894,21 @@ class Phenium:
         self,
         table,
     ) -> pl.dataframe.frame.DataFrame:
-        # must be adapted for boundaries!
-        # currently only transcripts are passed...
+        """
+        Filter a table containing coordinates for points by a bounding box.
+        The bounding box is defined by `SRT_section`.
+
+        Parameters
+        ----------
+            table : polars DataFrame
+                A DataFrame with columns containing coordinates of points.
+                Either like `transcripts.parquet` or `cell_boundaries.parquet`
+        
+        Returns
+        -------
+            out : polars.dataframe.frame.DataFrame
+                A polars dataframe, with entries all inside a defined bounding box.
+        """
         filtered_table = filter_by_location(
             table,
             self.XMI.sections[self.SRT_section],
@@ -933,6 +918,9 @@ class Phenium:
         return filtered_table
 
     def _XOA_masks(self):
+        """
+        WIP as it is very slow.
+        """
         path = self.SRT_dir / 'cell_boundaries.parquet'
         table = pl.read_parquet(path)
         table = self.filter_for_section(table)
@@ -962,10 +950,29 @@ class Phenium:
         skip_affine=False, # only for debug. remove later
         quick=False,
         verbose=False
-    ):
-        '''
+    )-> None:
+        """
         Prepare `Phenium` and the input for the Segmentation and Deconvolution.
-        '''
+         - sets the sections that correspond to each other, 
+            - and aligns them;
+         - sets the prior, if defined in the initialization;
+
+        Parameters
+        ----------
+            SRT_section : int
+                The number corresponding to the area of interest as depicted in the SRT_overview.
+            IHC_section : int
+                Same as `SRT_section` but based on the IHC_overview.
+            quick : bool = False
+                If `true` use the quick variant of the ants-registration algorithm.
+            verbose : bool = False
+                If `true` prints progress-bars for most functions.
+        
+        Returns
+        -------
+            out : None
+                The results are assigned to object-variables.
+        """
         if (
             (SRT_section in self.XMI.sections)
             and
@@ -1007,6 +1014,7 @@ class Phenium:
                 verbose,
             )
             self.IHC.adjust(verbose=verbose)
+            # self.IHC.denoise(verbose=verbose)
 
         if self.prior_type == 'CP':
             style = self.CP_params['style']
@@ -1042,6 +1050,9 @@ class Phenium:
     def run_proseg(
         self,
     ) -> None:
+        """
+        ...
+        """
         proseg_wrapper(
             self.PS_params,
             self.machine,
@@ -1210,13 +1221,24 @@ class Phenium:
 
         if verbose:
             pbar = tqdm.tqdm(total=len(celltype_prot_dict.keys()))
-        for _idx, (cell, layer, geom, celltype) in gdf.iterrows():
-            x_low, y_low, x_high, y_high = geom.bounds
-            channels = tuple(
-                int(self.IHC.roi_biomarkers[c]) for c in celltype_prot_dict[celltype]
-            )
-            img = self.IHC.roi[channels, x_low:x_high, y_low:y_high]
-            new_img[channels, layer, x_low:x_high, y_low:y_high] = img
+        for idx, (cell, layer, geom, celltype) in gdf.iterrows():
+            x_low, y_low, x_high, y_high = np.array(geom.bounds).astype(np.int32)
+            layers = gdf[gdf.cell == cell].layer.size
+            prots = celltype_prot_dict[celltype]
+
+            if isinstance(prots, list):
+                channels = [
+                    int(self.IHC.roi_biomarkers[c]) for c in prots
+                ]
+            elif isinstance(prots, str):
+                channels = [
+                    int(self.IHC.roi_biomarkers[prots])
+                ]
+            else:
+                raise TypeError('content of celltype_prot_dict is wrong type: ', type(prots))
+
+            img = self.IHC.roi[channels, x_low:x_high, y_low:y_high] / layers
+            new_img[channels, layer, x_low:x_high, y_low:y_high] += img
             if verbose:
                 pbar.update(1)
         if verbose:

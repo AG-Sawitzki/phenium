@@ -36,14 +36,17 @@ def polygon_overlay(
     img_norm = img
 
     # plt.style.use("./segmentstyle.mplstyle")
+    colors = ["blue", "cyan", "magenta", "yellow"]
 
     fz = 24
     if img.ndim == 2:
         dimy, dimx = img.shape
+        c = 1
     elif img.ndim == 3:
-        _, dimy, dimx = img.shape
+        c, dimy, dimx = img.shape
     else:
         dimy, dimx, *_ = img.shape
+
 
     # fig.set_frameon(False)
     fig.set_size_inches(dimy / 100, dimx / 100)
@@ -72,12 +75,12 @@ def polygon_overlay(
     ax.set_ylim(dimy, 0)
 
     if img.ndim == 3:
-        img_norm_m = np.moveaxis(img_norm, -1, 0)
+        img_norm_m = img_norm.reshape((c, dimy, dimx))
         images = [img for img in img_norm_m]
 
         _microim = microshow(
             images=images,
-            cmaps=["blue", "cyan", "magenta", "yellow"],
+            cmaps=colors[:c],
             ax=ax,
             limits=[img_norm_m.min(), img_norm_m.max()],
             show_axis=True,
@@ -86,7 +89,7 @@ def polygon_overlay(
         images = [img]
         _microim = microshow(
             images=images,
-            cmaps=["blue"],
+            cmaps=colors[:c],
             ax=ax,
             limits=[img_norm.min(), img_norm.max()],
             show_axis=True,

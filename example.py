@@ -41,7 +41,7 @@ ana = Phenium(
     exclude=exclude
 )
 
-ana.prepare(4, 12, verbose=True)
+ana.prepare(4, 12, quick=True, verbose=True)
 
 ana.IHC.cluster(resolution=0.175, exclude=["DAPI"])
 io.save_anndata(ana.IHC.adata, prefix="IHC", output_dir=Path(output_dir))
@@ -86,7 +86,7 @@ low = int(11652 / 2 - 500)
 high = int(11652 / 2 + 500)
 
 tifffile.imwrite(
-    output_dir / "func_name_img_IHC.tif",
+    ana.output_dir / "func_name_img_IHC.tif",
     new_img[:, :, low:high, low:high],
     bigtiff=True,
 )
