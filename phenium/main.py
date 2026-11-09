@@ -36,6 +36,7 @@ from scipy.io import loadmat, mmread
 from scipy.sparse import csr_matrix
 from shapely import transform
 from shapely.geometry import Point
+from skimage.draw import polygon
 from skimage.transform import rescale
 
 from phenium.io import save_anndata
@@ -47,11 +48,11 @@ from phenium.utils import (
     cell_contour,
     cell_loc,
     chunk_size,
-    denoise_image,
     filter_by_location,
     find_rois,
     get_biomarkers,
     get_pixel_size,
+    pixelate,
     relative,
     run_leiden,
     scale_coords,
@@ -260,7 +261,10 @@ class IMG:
         else:
             if verbose:
                 pbar = tqdm.tqdm(total=len(iterations))
+                pbar.set_description('Adjusting Channel: X')
             for channel in iterations:
+                if verbose:
+                    pbar.set_description(f"Adjusting Channel: {channel}")
                 img = func(moving[channel])
                 imgs.append(img)
                 if verbose:
@@ -353,7 +357,9 @@ class IMG:
         )
         if verbose:
             pbar = tqdm.tqdm(total=chunks)
-        for (y_c, x_c) in grid:
+        for chunk, (y_c, x_c) in enumerate(grid):
+            if verbose:
+                pbar.set_description(f'Segmenting {chunk}/{chunks}')
             y_low = max(0, int(y_c - vrlpy))
             y_high = min(y, int(y_c + y_size + vrlpy))
 
@@ -423,7 +429,9 @@ class IMG:
 
         if verbose:
             pbar = tqdm.tqdm(total=(len(x_range) * len(y_range)))
-        for (y_c, x_c) in grid:
+        for idx, (y_c, x_c) in enumerate(grid):
+            if verbose:
+                pbar.set_description('Assigning features to cell in {idx}')
             y_low = y_c
             y_high = y_c + y_size
             x_low = x_c
@@ -472,6 +480,8 @@ class IMG:
         if verbose:
             pbar = tqdm.tqdm(total=len(self.cell_loc))
         for cid, (x_c, y_c) in enumerate(self.cell_loc):
+            if verbose:
+                pbar.set_description(f"Finding contour for Cell {cid}")
             if cid != 0:
                 y_low = max(0, y_c - tile_size)
                 y_high = min(y, y_c + tile_size)
@@ -1196,23 +1206,23 @@ class Phenium:
         verbose: bool = True,
     ):
         gdf = self.assign_celltype(cellid_celltype_dict)
-
+        gdf = pixelate(gdf, self.IST.pxsize)
         if celltype_prot_dict is None:
             celltype_prot_dict = dict(
                 zip(
-                    np.random.randint(
-                        0,
-                        len(self.adata.uns["leiden_colors"]),
-                        size=len(self.IHC.roi_biomarkers),
-                    ).astype(str),
-                    self.IHC.roi_biomarkers
+                    [str(i) for i in range(len(self.adata.uns["leiden_colors"]) + 1)],
+                    [
+                        list(self.IHC.roi_biomarkers)
+                        for i in range(len(self.adata.uns["leiden_colors"]) + 1)
+                    ],
                 )
             )
-
+        roi = self.IHC.roi.view()
+        biomarkers=self.IHC.roi_biomarkers
         new_img = np.zeros(
             (
-                len(self.IHC.roi_biomarkers),
                 self.layers,
+                len(self.IHC.roi_biomarkers),
             )
             + self.XMI.roi.shape[1:]
         )
@@ -1220,27 +1230,35 @@ class Phenium:
         gc.collect()
 
         if verbose:
-            pbar = tqdm.tqdm(total=len(celltype_prot_dict.keys()))
-        for idx, (cell, layer, geom, celltype) in gdf.iterrows():
-            x_low, y_low, x_high, y_high = np.array(geom.bounds).astype(np.int32)
-            layers = gdf[gdf.cell == cell].layer.size
-            prots = celltype_prot_dict[celltype]
-
-            if isinstance(prots, list):
-                channels = [
-                    int(self.IHC.roi_biomarkers[c]) for c in prots
-                ]
-            elif isinstance(prots, str):
-                channels = [
-                    int(self.IHC.roi_biomarkers[prots])
-                ]
-            else:
-                raise TypeError('content of celltype_prot_dict is wrong type: ', type(prots))
-
-            img = self.IHC.roi[channels, x_low:x_high, y_low:y_high] / layers
-            new_img[channels, layer, x_low:x_high, y_low:y_high] += img
-            if verbose:
-                pbar.update(1)
+            pbar = tqdm.tqdm(total=len(gdf.index))
+        for layer in range(gdf.layer.max()+1):
+            for celltype in range(int(gdf.celltype.max())+1):
+                pbar.set_description(f'Processing L{layer}:CT{celltype}')
+                prots = celltype_prot_dict[str(celltype)]
+                if isinstance(prots, list):
+                    channels = [
+                        int(biomarkers[c]) for c in prots
+                    ]
+                elif isinstance(prots, str):
+                    channels = [
+                        int(biomarkers[prots])
+                    ]
+                else:
+                    raise TypeError('content of celltype_prot_dict is wrong type: ', type(prots))
+                fltr = (
+                    (gdf.layer == layer).to_numpy() & 
+                    (gdf.celltype == str(celltype)).to_numpy()
+                )
+                sub_gdf = gdf[fltr]
+                # bnds = sub_gdf.bounds.astype(int)
+                coords = sub_gdf.get_coordinates().astype(int)
+                for loc in sub_gdf.index:
+                    # minx, miny, maxx, maxy = bnds.loc[loc]
+                    vrtcs = coords.loc[loc].to_numpy()
+                    rr, cc = polygon(vrtcs[:,1], vrtcs[:,0])
+                    for channel in channels:
+                        new_img[layer, channel, rr, cc] = roi[channel, rr, cc] / self.layers
+                    pbar.update(1)
         if verbose:
             pbar.close()
         gc.collect()

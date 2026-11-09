@@ -6,6 +6,7 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
+import polars.selectors as cs
 import tifffile
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
@@ -13,6 +14,7 @@ from matplotlib.font_manager import FontProperties
 from microfilm.microplot import microshow
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 from numpy.typing import ArrayLike
+from scipy import stats
 from shapely import Point
 
 
@@ -126,3 +128,37 @@ def scatter_doublets(
         ax.scatter(x, y, c=color)
 
         return tuple(ax, fig)
+
+
+def plot_spatial_transcripts(
+    table,
+    ax,
+    fig,
+    pseudo_3d
+):
+    if pseudo_3d:
+        columns = (cs.ends_with('_location'))
+    else:
+        columns = (cs.ends_with('_location') & ~cs.starts_with('z'))
+    arr = table.select(columns).to_numpy()
+    ax.scatter(arr[::100, 0], arr[::100, 1], c=(arr[:, 2] if pseudo_3d else 'b'))
+
+    return fig, ax
+
+
+def plot_transcripts_vs_z(
+    table,
+    ax,
+    fig,
+    axis,
+    lingres,
+):
+    axis_arr = table.select(pl.col(f"{axis}_location")).to_numpy()
+    z_arr = table.select(pl.col('z_location')).to_numpy()
+    ax.scatter(axis_arr[::100], z_arr[::100], c='b')
+    if lingres:
+        gres = stats.linregress(axis_arr[::100], z_arr[::100])
+        ax.plot(gres(axis_arr[::1000]), c='r')
+    
+    return fig, ax
+
