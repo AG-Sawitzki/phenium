@@ -16,7 +16,7 @@ xenium_dir = "/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260827_
 pheno_img = "/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260902_ITCAIM_Phenium_Slide8/Scan1/20260902_ITCAIM_Phenium_Slide8_Scan1.er.qptiff"
 output_dir = "/data/cephfs-1/scratch/projects/sawitzki-phenium"
 config_path = "/data/cephfs-2/unmirrored/projects/sawitzki-phenium/phenium/config.toml"
-prior_type = "CP"
+prior_type = "XOA"
 channels = ("DAPI", "CD45")
 exclude = [
     "CD69",
@@ -86,7 +86,7 @@ low = int(11652 / 2 - 500)
 high = int(11652 / 2 + 500)
 
 tifffile.imwrite(
-    ana.output_dir / "func_name_img_IHC.tif",
+    ana.output_dir / "func_name_img_XMI.tif",
     new_img[:, :, low:high, low:high],
     bigtiff=True,
 )

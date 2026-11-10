@@ -532,9 +532,10 @@ class IMG:
         self,
         resolution: float = 0.175,
         exclude: list[str, ...] | tuple[str, ...] | None = None,
+        mask: bool | None = None,
         return_copy: bool = False,
     ):
-        self.make_feature_matrix()
+        self.make_feature_matrix(masks=mask)
         # self.find_cell_loc()
 
         adata = self._anndata()
@@ -557,11 +558,20 @@ class IMG:
 
     def plot_segmentation(
         self,
-        plgns: gpd.GeoDataFrame | None = None,
+        plgns: gpd.GeoDataFrame | ArrayLike | None = None,
         channels: list[(str | int), ...] = 0
     )-> tuple[Figure, Axes]:
         if plgns is None:
+            try:
+                plgns = self.plgns
+            except AttributeError:
+                _plgns = self.find_cell_contour()
+                plgns = self.plgns
+        elif isinstance(plgns, np.ndarry):
+            _plgns = self.find_cell_contour(masks=plgns)
             plgns = self.plgns
+        else:
+            raise TypeError(f'Not implemented to deal with {type(plgns)}.')
 
         if not isinstance(channels, list):
             channels = list(channels)
@@ -585,6 +595,8 @@ class IMG:
             ax=ax, fig=fig,
             pxsize=self.pxsize[0]
         )
+
+        gc.collect()
 
         return fig, ax
 
@@ -651,26 +663,22 @@ class IST:
         res_x = stats.linregress(x, z)
         res_y = stats.linregress(y, z)
 
-        if res_x.slope < res_y.slope:
-            res = res_y
-            col = 'y_location'
-        else:
-            res = res_x
-            col = 'x_location'
+        for ax, res in [('x', res_x), ('y', res_y)]:
+            for fov in self.fov_names:
+                table_ = table.filter(pl.col('fov_name') == fov)
+                exog = max(table_[f'{ax}_location'])
 
-        for fov in self.fov_names:
-            table_ = table.filter(pl.col('fov_name') == fov)
-            exog = max(table_[col])
-
-            table.with_columns(
-                pl.when(
-                    pl.col('fov_name') == fov
-                ).then(
-                    pl.col('z_location') - (res.intercept + res.slope*exog)
-                ).otherwise(
-                    pl.col('z_location')
+                table.with_columns(
+                    pl.when(
+                        pl.col('fov_name') == fov
+                    ).then(
+                        pl.col('z_location') - (res.intercept + res.slope*exog)
+                    ).otherwise(
+                        pl.col('z_location')
+                    )
                 )
-            )
+
+        gc.collect()
 
         z_kde = stats.gaussian_kde(table['z_location'].to_numpy())
 
@@ -693,14 +701,14 @@ class IST:
             dens = z_density[z_idx]
             z_val = z_space[z_idx]
             density_sum += dens
-            if density_sum/sum(z_density) > 0.9:
-                break
             z_min = min(z_min, z_val)
-            z_max = max(z_max, z_max)
+            z_max = max(z_max, z_val)
             if z_min == 0:
                 z_min = z_val
             if z_max == 0:
                 z_max = z_val
+            if density_sum/sum(z_density) > 0.99:
+                break
 
         expr = (
             pl.col('z_location').is_between(
@@ -775,9 +783,11 @@ class Phenium:
         "config",
         "counts",
         "machine",
+        "masks",
         "output_dir",
         "prior_type",
         "scaling_factor",
+        "sub_adata",
     ]
     def __init__(
         self,
@@ -919,10 +929,16 @@ class Phenium:
             out : polars.dataframe.frame.DataFrame
                 A polars dataframe, with entries all inside a defined bounding box.
         """
+        new_coords = scale_coords(
+            self.XMI.sections[self.SRT_section], self.XMI.pxsize[0]
+        )
         filtered_table = filter_by_location(
             table,
-            self.XMI.sections[self.SRT_section],
-            pixelsize=self.XMI.pxsize[0]
+            new_coords,
+        )
+        filtered_table = relative(
+            table,
+            new_coords
         )
         gc.collect()
         return filtered_table
@@ -934,11 +950,12 @@ class Phenium:
         path = self.SRT_dir / 'cell_boundaries.parquet'
         table = pl.read_parquet(path)
         table = self.filter_for_section(table)
+        table = pixelate(table, self.XMI.pxsize[0])
         print(table.head(n=5))
         masks = boundaries_to_mask(
             table,
-            self.XMI.roi.shape,
-            self.XMI.pxsize)
+            self.XMI.roi.shape[self.XMI.axes['y']:self.XMI.axes['x']+1],
+        )
 
         self.prior_path = Path(
             self.output_dir / f'XOA_masks_{self.SRT_section}.npy'
@@ -949,6 +966,7 @@ class Phenium:
             masks,
             allow_pickle=True
         )
+        self.masks = masks
         gc.collect()
         # with open(self.output_dir / f'XOA_polygons_{self.SRT_section}.json') as f:
         #     json.dump(f, polygons)
@@ -1014,17 +1032,15 @@ class Phenium:
         if verbose:
             print(f'Saved IST.roi at {IST_path}')
 
-        if not skip_affine:
-            if verbose:
-                print('Adjusting IHC to be of same shape as SRT imgs')
-            self.IHC.find_affine(
-                self.XMI.roi[0, :, :],
-                self.scaling_factor,
-                quick,
-                verbose,
-            )
-            self.IHC.adjust(verbose=verbose)
-            # self.IHC.denoise(verbose=verbose)
+        if verbose:
+            print('Adjusting IHC to be of same shape as SRT imgs')
+        self.IHC.find_affine(
+            self.XMI.roi[0, :, :],
+            self.scaling_factor,
+            quick,
+            verbose,
+        )
+        self.IHC.adjust(verbose=verbose)
 
         if self.prior_type == 'CP':
             style = self.CP_params['style']
@@ -1038,14 +1054,13 @@ class Phenium:
                     'Not implemented to segment on'
                     f'{self.CP_params['style']}'
                 )
+            self.masks = masks
             self.prior_path = Path(
                 self.output_dir / f"CP_masks_{self.SRT_section}_{style}.npy"
             )
             np.save(self.prior_path, np.uint32(masks), allow_pickle=True)
         elif self.prior_type == 'XOA':
-            raise NotImplementedError(
-                'Have not implemented that yet. Sowwy :< '
-            )
+            _ = self._XOA_masks()
         else:
             print('No or unknown prior.')
             self.prior_path = ''
@@ -1081,6 +1096,7 @@ class Phenium:
         counts_path = self.output_dir / 'counts.mtx.gz'
         counts = mmread(counts_path)
         self.counts = counts.tocsr()
+        gc.collect()
 
     def _anndata(self):
         """
@@ -1170,6 +1186,29 @@ class Phenium:
         else:
             self.adata = adata
 
+    def recluster(
+        self,
+        cluster,
+        resolution,
+        save=True,
+        return_copy=False,
+    ):
+        adata = self.adata
+        sub_adata = adata[adata.obs['leiden'].isin([str(cluster)]), :]
+        sub_adata = run_leiden(sub_adata, resolution=resolution)
+        sc.tl.rank_genes_groups(
+            sub_adata,
+            groupby='leiden'
+        )
+        if save:
+            save_anndata(sub_adata, prefix=f'IST_c{cluster}', output_dir=self.output_dir)
+
+        gc.collect()
+
+        if return_copy:
+            return sub_adata
+        else:
+            self.sub_adata = sub_adata
     # def rename_cluster(self, new_names):
     #     old_names = self.adata.obs['leiden']
     #     mapping_names = dict(
@@ -1197,14 +1236,36 @@ class Phenium:
         fltr = [idx in cellid_celltype_dict for idx in gdf.cell]
         gdf = gdf[fltr]
         gdf["celltype"] = gdf.apply(lambda row: cellid_celltype_dict[row.cell], axis=1)
+        
+        gc.collect()
+        
         return gdf
 
     def function_name(
         self,
         cellid_celltype_dict,
         celltype_prot_dict,
+        img=None,
+        biomarkers=None,
         verbose: bool = True,
     ):
+        if img is None:
+            img = self.IHC.roi.view()
+        elif isinstance(img, np.ndarray):
+            img = img.view()
+        else:
+            raise TypeError(
+                f'`img` is not `ndarray`, but {type(img)}'
+            )
+
+        if biomarkers is None:
+            biomarkers = self.IHC.roi_biomarkers
+        elif isinstance(biomarkers, dict):
+            pass
+        else:
+            raise TypeError(
+                f"`biomarkers` is not `dict`, but {type(biomarkers)}"
+            )
         gdf = self.assign_celltype(cellid_celltype_dict)
         gdf = pixelate(gdf, self.IST.pxsize)
         if celltype_prot_dict is None:
@@ -1212,19 +1273,17 @@ class Phenium:
                 zip(
                     [str(i) for i in range(len(self.adata.uns["leiden_colors"]) + 1)],
                     [
-                        list(self.IHC.roi_biomarkers)
+                        list(biomarkers)
                         for i in range(len(self.adata.uns["leiden_colors"]) + 1)
                     ],
                 )
             )
-        roi = self.IHC.roi.view()
-        biomarkers=self.IHC.roi_biomarkers
         new_img = np.zeros(
             (
                 self.layers,
-                len(self.IHC.roi_biomarkers),
+                len(biomarkers),
             )
-            + self.XMI.roi.shape[1:]
+            + img.shape[~1:]
         )
 
         gc.collect()
@@ -1257,7 +1316,7 @@ class Phenium:
                     vrtcs = coords.loc[loc].to_numpy()
                     rr, cc = polygon(vrtcs[:,1], vrtcs[:,0])
                     for channel in channels:
-                        new_img[layer, channel, rr, cc] = roi[channel, rr, cc] / self.layers
+                        new_img[layer, channel, rr, cc] = img[channel, rr, cc] / self.layers
                     pbar.update(1)
         if verbose:
             pbar.close()

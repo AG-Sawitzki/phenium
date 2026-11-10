@@ -141,24 +141,86 @@ def plot_spatial_transcripts(
     else:
         columns = (cs.ends_with('_location') & ~cs.starts_with('z'))
     arr = table.select(columns).to_numpy()
-    ax.scatter(arr[::100, 0], arr[::100, 1], c=(arr[:, 2] if pseudo_3d else 'b'))
-
+    scttr = ax.scatter(
+        arr[::100, 0], arr[::100, 1], c=(arr[::100, 2] if pseudo_3d else "#009AA9"), s=0.5
+    )
+    if pseudo_3d:
+        fig.colorbar(scttr, ax=ax, orientation="vertical")
+    ax.set_aspect('equal')
+    ax.set_xlabel('x_location in px')
+    ax.set_ylabel('y_location in px')
     return fig, ax
 
 
 def plot_transcripts_vs_z(
     table,
-    ax,
     fig,
+    ax,
     axis,
     lingres,
+    color_fovs,
 ):
-    axis_arr = table.select(pl.col(f"{axis}_location")).to_numpy()
-    z_arr = table.select(pl.col('z_location')).to_numpy()
-    ax.scatter(axis_arr[::100], z_arr[::100], c='b')
-    if lingres:
-        gres = stats.linregress(axis_arr[::100], z_arr[::100])
-        ax.plot(gres(axis_arr[::1000]), c='r')
+    if lingres & color_fovs:
+        raise NotImplementedError('Cannot add regression line and color each fov differently.')
+
+    if color_fovs:
+        fov_names = list(set(table['fov_names']))
+        for fov in fov_names:
+            table_ = table.filter(pl.col('fov_name')==fov)
+            z_arr = table_.select(pl.col('z_location')).to_numpy()[::100].ravel()
+            axis_arr = table_.select(pl.col(f'{axis}_location')).to_numpy()[::100].ravel()
+            ax.scatter(axis_arr, z_arr, c='#009AA9', s=0.5)
+    else:
+        axis_arr = table.select(pl.col(f"{axis}_location")).to_numpy()[::100].ravel()
+        z_arr = table.select(pl.col("z_location")).to_numpy()[::100].ravel()
     
+    if lingres:
+        gres = stats.linregress(axis_arr, z_arr)
+        ax.plot(axis_arr, (gres.intercept + gres.slope*axis_arr), c="#EA5451")
+    ax.set_xlabel(f'{axis}_location in px')
+    ax.set_ylabel('z_location in um')
     return fig, ax
 
+
+def plot_z_distribution(
+    table,
+    fig,
+    ax,
+    cutoff
+):
+    z_kde = stats.gaussian_kde(
+        table.select(pl.col('z_location').to_numpy().ravel())
+    )
+
+    z_min = table.select(pl.min('z_location'))
+    z_max = table.select(pl.max('z_location'))
+
+    z_space = np.linspace(z_min, z_max, 100).ravel()
+
+    z_density = z_kde(z_space)
+
+    ax.plot(z_space, z_density, c="#009AA9")
+    ax.set_xlabel('z_location in um')
+    ax.set_ylabel('fraction of transcripts')
+
+    if cutoff:
+        z_density_argsort = np.argsort(z_density)[::-1]
+        z_min = 0
+        z_max = 0
+        density_sum = 0
+        for z_idx in z_density_argsort:
+            dens = z_density[z_idx]
+            z_val = z_space[z_idx]
+            density_sum += dens
+            if density_sum / sum(z_density) > 0.95:
+                break
+            z_min = min(z_min, z_val)
+            z_max = max(z_max, z_val)
+            if z_min == 0:
+                z_min = z_val
+            if z_max == 0:
+                z_max = z_val
+
+        ax.vlines([z_min, z_max], z_density.min(), z_density.max(), colors="#EA5451")
+
+    return fig, ax

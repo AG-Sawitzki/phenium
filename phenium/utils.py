@@ -22,8 +22,8 @@ import squidpy as sq
 import tifffile
 from cellpose.utils import outlines_list
 from numpy.typing import ArrayLike
-from PIL import Image, ImageDraw
 from shapely import Polygon
+from skimage.draw import polygon
 from skimage.filters import sobel
 from skimage.transform import rescale
 
@@ -308,10 +308,10 @@ def relative(
 
 def pixelate(
     table: pl.DataFrame | gpd.GeoDataFrame,
-    pixelsize_xy: float,
+    pxsize: float,
 ) -> pl.DataFrame | gpd.GeoDataFrame:
     """
-    Transform coordinates in (geo)dataframe from length unit to pixelsize.
+    Transform coordinates in (geo)dataframe from length unit to pxsize.
 
     Assumes pixel have same length in x & y.
 
@@ -321,8 +321,8 @@ def pixelate(
             Contains the coordinates to transform.
             Column with `vertex_` or `_location` for polars.
             `geometry` column in GeoDataFrame.
-        pixelsize_xy : float
-            Pixelsize of a pixel in xy plane.
+        pxsize : float
+            pxsize of a pixel in xy plane.
 
     Returns
     -------
@@ -334,12 +334,12 @@ def pixelate(
             (cs.ends_with('_location') & ~cs.starts_with('z'))
             | (cs.starts_with('vertex_') & ~cs.ends_with('z'))
         )
-        pixeled = table.select(columns) / pixelsize_xy
-        pixeled = pixeled.round(0)
+        pixeled = table.select(columns) / pxsize
+        pixeled = pixeled.select(columns.round(0))
         table = table.update(pixeled)
     if isinstance(table, gpd.GeoDataFrame):
         geometry = table['geometry'].transform(
-            lambda x: (x * np.array([1 / pixelsize_xy, 1 / pixelsize_xy])).round(0)
+            lambda x: (x * np.array([1 / pxsize, 1 / pxsize])).round(0)
         )
         table['geometry'] = geometry
     return table
@@ -349,12 +349,12 @@ def filter_by_location(
     table: pl.DataFrame | gpd.GeoDataFrame,
     coords: dict,
     z_bounds: tuple | None = None,
-    pixelsize: float | None = None,
+    pxsize: float | None = None,
 ) -> pl.DataFrame | gpd.GeoDataFrame:
     """
     Keep entries in `table` that have coordinates in `coords`.
-    `coords` and `table` do not have the same units add `pixelsize`.
-    `pixelsize` is applied to `table`, not `coords`.
+    `coords` and `table` do not have the same units add `pxsize`.
+    `pxsize` is applied to `table`, not `coords`.
 
     Parameters
     ----------
@@ -368,7 +368,7 @@ def filter_by_location(
         z_bounds : tuple, optional
             Tuple of lower and upper z-Axis boundaries.
             Only for polars dataframe with "z_location" column.
-        pixelsize : float, optional
+        pxsize : float, optional
             Size of a pixel in X & Y. Used to scale the values in `coords`.
 
     Returns
@@ -385,9 +385,9 @@ def filter_by_location(
             var_min, var_max = extremes
             # print(var_min, '\n', var_max, '\n', extremes)
 
-            if pixelsize:
-                var_min = float(var_min * pixelsize)
-                var_max = float(var_max * pixelsize)
+            if pxsize:
+                var_min = float(var_min * pxsize)
+                var_max = float(var_max * pxsize)
             if f'{axis}_location' in table.columns:
                 column = f'{axis}_location'
             elif f'vertex_{axis}' in table.columns:
@@ -414,11 +414,11 @@ def filter_by_location(
         x_min, x_max = coords['x']
         y_min, y_max = coords['y']
 
-        if pixelsize:
-            x_min *= pixelsize
-            x_max *= pixelsize
-            y_min *= pixelsize
-            y_max *= pixelsize
+        if pxsize:
+            x_min *= pxsize
+            x_max *= pxsize
+            y_min *= pxsize
+            y_max *= pxsize
 
         polygon = Polygon([
             (x_min, y_min), (x_max, y_min),
@@ -493,24 +493,53 @@ def transform_image(
 
 
 def value_at_cell(
-    cell_id,
-    masks,
-    roi
-):
+    cell_id: int,
+    masks: ArrayLike,
+    roi: ArrayLike
+)-> float:
+    """
+    Retrieve the total signal over a cell, defined by a mask.
+
+    Parameters
+    ----------
+        cell_id : int
+            Identification of the mask to find the value for.
+        masks : ndarray
+            Array containing at least the entire mask of `cell_id`. Same shape as `roi`.
+        roi : ndarray
+            Array containing at least the entire signal for `cell_id`. Same shape as `masks`.
+
+    Returns
+    -------
+        out : float
+            Sum of all values of `roi` at `mask[cell==id]`.
+    """
     if cell_id != 0:
-        fltr = masks == cell_id
-        vals = roi[:, fltr].sum(axis=1)
-        return vals
+        return roi[:, masks == cell_id].sum(axis=1)
 
 
 def cell_loc(
-    cell_id,
-    masks,
-):
+    cell_id: int,
+    masks: ArrayLike,
+)-> ArrayLike:
+    """
+    Retrieve the first pixel part of `cell_id` in `masks`.
+
+    Parameters
+    ----------
+        cell_id : int
+            Identification of the mask to find the value for.
+        masks : ndarray
+            Array containing at least the entire mask of `cell_id`.
+
+    Returns
+    -------
+        out : ndarray
+            Coordinates (y, x) of the first pixel of `mask` belonging to `cell_id`.
+    """
     if cell_id != 0:
         _, x = masks.shape
-        fltr = masks == cell_id
-        idx = np.argmax(fltr)
+        idx = np.argmax(masks == cell_id)
         return np.array([math.fmod(idx, x), math.floor(idx / x)])
 
 
@@ -520,12 +549,12 @@ def cell_contour(
     masks,
 ):
     """
-    Get the outline of a specific mask in a multi-mask image.
+    Get the outline of a mask (cell_id) in a multi-mask image.
 
     Parameters
     ----------
         cell_id : int
-            identification of the mask to find the outline of
+            Identification of the mask to find the outline of.
         masks : np.ndarray
             Array containing at least the entire mask of `cell_id`.
 
@@ -554,18 +583,13 @@ def _draw_mask(
     table,
     cell_ids,
     masks,
-    pxsize,
 ):
     cell_id = cell_ids[idx]
     table_cid = table.filter(pl.col('cell_id') == cell_id)
     x = table_cid.select(pl.col('vertex_x')).to_numpy().ravel()
     y = table_cid.select(pl.col('vertex_y')).to_numpy().ravel()
-    px_x = np.int32(x/pxsize[0])
-    px_y = np.int32(y/pxsize[1])
-    polyline = list(zip(px_x, px_y))
-    img = Image.new('1', masks.shape, 0)
-    ImageDraw.Draw(img).polygon(polyline, outline=1, fill=1, width=1)
-    masks[np.array(img)] = idx
+    rr, cc = polygon(y, x)
+    masks[rr, cc] = idx
 
     return masks
 
@@ -573,10 +597,9 @@ def _draw_mask(
 def boundaries_to_mask(
     table: pl.DataFrame,
     shape: tuple,
-    pxsize: tuple,
 ) -> ArrayLike | dict:
     """
-    ...
+    Draw the nodes defined in `_bondaries.parquet` as polygons into an array.
 
     Parameters
     ----------
@@ -586,41 +609,41 @@ def boundaries_to_mask(
             shape of the resulting image
         pxsize : tuple
             tuple of size of a pixel in x, y direction
+    
+    Returns
+    -------
+        out : ArrayLike
+            numpy array with each cell_mask
     """
-    masks = np.zeros(shape[1:], dtype=np.uint64)
+    masks = np.zeros(shape)
 
     unique_ids = table.select(pl.col('cell_id')).unique()
     cell_ids = [row['cell_id'] for row in unique_ids.iter_rows(named=True)]
     cell_ids = sorted(cell_ids)
 
-    # for idx in tqdm.tqdm(range(len(cell_ids))):
+    # iterations = range(len(cell_ids))
+    # for idx in iterations:
     #     masks = _draw_mask(
     #         idx,
     #         table,
     #         cell_ids,
     #         masks,
-    #         pxsize,
+    #         pxsizes,
     #     )
-
-    func = partial(
-        _draw_mask,
-        table=table,
-        cell_ids=cell_ids,
-        masks=masks,
-        pxsize=pxsize,
-    )
-    iterations = range(len(cell_ids))
-
-    with Pool(processes=2) as pool:
-        res = pool.imap_unordered(
-            func,
-            iterations,
-            chunksize=3,
+    
+    for idxs in np.array_split(np.arange(len(cell_ids)), (len(cell_ids)//3)):
+        kwargs = {
+            'table': table,
+            'cell_ids': cell_ids,
+            'masks': masks,
+        }
+        idxs_e = np.expand_dims(idxs, 1)
+        msks = np.apply_along_axis(
+            _draw_mask, 1, idxs_e,
+            **kwargs
         )
-        pool.close()
-        pool.join()
-    print(res)
-    print(sum(sum(masks)))
+        masks = msks.sum(axis=0)
+
     return masks
 
 
