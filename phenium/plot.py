@@ -74,7 +74,7 @@ def polygon_overlay(
     ax.add_artist(asb)
 
     ax.set_xlim(0, dimx)
-    ax.set_ylim(dimy, 0)
+    ax.set_ylim(0, dimy)
 
     if img.ndim == 3:
         img_norm_m = img_norm.reshape((c, dimy, dimx))
@@ -169,10 +169,11 @@ def plot_transcripts_vs_z(
             table_ = table.filter(pl.col('fov_name')==fov)
             z_arr = table_.select(pl.col('z_location')).to_numpy()[::100].ravel()
             axis_arr = table_.select(pl.col(f'{axis}_location')).to_numpy()[::100].ravel()
-            ax.scatter(axis_arr, z_arr, c='#009AA9', s=0.5)
+            ax.scatter(axis_arr, z_arr, c="#009AA9", s=0.5)
     else:
         axis_arr = table.select(pl.col(f"{axis}_location")).to_numpy()[::100].ravel()
         z_arr = table.select(pl.col("z_location")).to_numpy()[::100].ravel()
+        ax.scatter(axis_arr, z_arr, c="#009AA9", s=0.5)
     
     if lingres:
         gres = stats.linregress(axis_arr, z_arr)

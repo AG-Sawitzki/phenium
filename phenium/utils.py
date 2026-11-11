@@ -250,7 +250,7 @@ def scale_coords(coords, factor):
         elif len(factor) >= 3:
             x_factor, y_factor, _ = factor
         else:
-            x_factor, y_factor = factor, factor
+            x_factor, y_factor, *_ = factor
     elif isinstance(factor, float):
         x_factor, y_factor = factor, factor
     else:
@@ -464,6 +464,7 @@ def transform_image(
         scaling_factor,
         preserve_range=True,
     )
+    moving = np.flip(moving)
     if isinstance(fixed, tuple):
         fixed = np.zeros(fixed, dtype=np.int32)
     else:
@@ -584,12 +585,24 @@ def _draw_mask(
     cell_ids,
     masks,
 ):
+    if isinstance(idx, np.ndarray):
+        idx = idx.squeeze()
     cell_id = cell_ids[idx]
     table_cid = table.filter(pl.col('cell_id') == cell_id)
     x = table_cid.select(pl.col('vertex_x')).to_numpy().ravel()
     y = table_cid.select(pl.col('vertex_y')).to_numpy().ravel()
+    x, y = x.astype(int), y.astype(int)
     rr, cc = polygon(y, x)
     masks[rr, cc] = idx
+    # minx = max(0, x.min()-1)
+    # miny = max(0, y.min()-1)
+    # maxx = min(masks.shape[0], x.max())
+    # maxy = min(masks.shape[0], y.max())
+    # umask = np.zeros((maxy-miny, maxx-minx), np.uint8)
+    # pts = np.array([list(zip(y, x))], np.int32)
+    # pts = pts.reshape((-1, 1, 2))
+    # umask = cv2.fillPoly(umask, pts=pts, color=255)
+    # masks[miny:maxy, minx:maxx][umask > 0] = idx
 
     return masks
 
@@ -621,28 +634,27 @@ def boundaries_to_mask(
     cell_ids = [row['cell_id'] for row in unique_ids.iter_rows(named=True)]
     cell_ids = sorted(cell_ids)
 
-    # iterations = range(len(cell_ids))
-    # for idx in iterations:
-    #     masks = _draw_mask(
-    #         idx,
-    #         table,
-    #         cell_ids,
-    #         masks,
-    #         pxsizes,
-    #     )
-    
-    for idxs in np.array_split(np.arange(len(cell_ids)), (len(cell_ids)//3)):
-        kwargs = {
-            'table': table,
-            'cell_ids': cell_ids,
-            'masks': masks,
-        }
-        idxs_e = np.expand_dims(idxs, 1)
-        msks = np.apply_along_axis(
-            _draw_mask, 1, idxs_e,
-            **kwargs
+    iterations = range(len(cell_ids))
+    for idx in iterations:
+        masks = _draw_mask(
+            idx,
+            table,
+            cell_ids,
+            masks,
         )
-        masks = msks.sum(axis=0)
+    
+    # for idxs in np.array_split(np.arange(len(cell_ids)), (len(cell_ids)//5)):
+    #     kwargs = {
+    #         "table": table,
+    #         "cell_ids": cell_ids,
+    #         "masks": np.zeros(shape),
+    #     }
+    #     idxs_e = np.expand_dims(idxs, 0)
+    #     msks = np.apply_along_axis(
+    #         _draw_mask, 0, idxs_e,
+    #         **kwargs
+    #     )
+    #     masks += msks.sum(axis=-1)
 
     return masks
 

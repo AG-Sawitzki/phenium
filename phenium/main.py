@@ -408,6 +408,8 @@ class IMG:
         if masks.shape != self.roi.shape[1:]:
             self.adjust()
 
+        masks = masks.astype(int)
+
         if self.roi.ndim == 3:
             _c, y, x = self.roi.shape
         elif self.roi.ndim == 4:
@@ -535,6 +537,7 @@ class IMG:
         mask: bool | None = None,
         return_copy: bool = False,
     ):
+        mask = mask.astype(int)
         self.make_feature_matrix(masks=mask)
         # self.find_cell_loc()
 
@@ -553,13 +556,17 @@ class IMG:
 
         sc.tl.rank_genes_groups(adata, groupby="leiden")
         gc.collect()
-        self.adata = adata
+
+        if return_copy:
+            return adata
+        else:
+            self.adata = adata
 
 
     def plot_segmentation(
         self,
         plgns: gpd.GeoDataFrame | ArrayLike | None = None,
-        channels: list[(str | int), ...] = 0
+        channels: list[str | int, ...] | int | str = 0
     )-> tuple[Figure, Axes]:
         if plgns is None:
             try:
@@ -567,14 +574,17 @@ class IMG:
             except AttributeError:
                 _plgns = self.find_cell_contour()
                 plgns = self.plgns
-        elif isinstance(plgns, np.ndarry):
+        elif isinstance(plgns, np.ndarray):
             _plgns = self.find_cell_contour(masks=plgns)
             plgns = self.plgns
         else:
             raise TypeError(f'Not implemented to deal with {type(plgns)}.')
 
         if not isinstance(channels, list):
-            channels = list(channels)
+            try:
+                channels = list(channels)
+            except TypeError:
+                channels = [channels]
 
         if isinstance(channels[0], int):
             pass
@@ -936,12 +946,12 @@ class Phenium:
             table,
             new_coords,
         )
-        filtered_table = relative(
-            table,
+        relative_filtered_table = relative(
+            filtered_table,
             new_coords
         )
         gc.collect()
-        return filtered_table
+        return relative_filtered_table
 
     def _XOA_masks(self):
         """
@@ -949,11 +959,11 @@ class Phenium:
         """
         path = self.SRT_dir / 'cell_boundaries.parquet'
         table = pl.read_parquet(path)
-        table = self.filter_for_section(table)
-        table = pixelate(table, self.XMI.pxsize[0])
-        print(table.head(n=5))
+        ftable = self.filter_for_section(table)
+        ptable = pixelate(ftable, self.XMI.pxsize[0])
+        # print(table.head(n=5))
         masks = boundaries_to_mask(
-            table,
+            ptable,
             self.XMI.roi.shape[self.XMI.axes['y']:self.XMI.axes['x']+1],
         )
 
@@ -967,6 +977,9 @@ class Phenium:
             allow_pickle=True
         )
         self.masks = masks
+
+        # function for vertex -> gdf
+        # then save as geojson
         gc.collect()
         # with open(self.output_dir / f'XOA_polygons_{self.SRT_section}.json') as f:
         #     json.dump(f, polygons)
@@ -1161,7 +1174,7 @@ class Phenium:
         )
 
         if save:
-            save_anndata(adata, prefix='IST', output_dir=self.output_dir)
+            save_anndata(adata, prefix=f'IST_{self.prior_type}', output_dir=self.output_dir)
 
         # predictions = celltypist.annotate(
         #     self.adata,

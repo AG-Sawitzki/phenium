@@ -43,20 +43,18 @@ ana = Phenium(
 
 ana.prepare(4, 12, quick=True, verbose=True)
 
+adata = ana.IHC.cluster(
+    resolution=0.175, exclude=["DAPI"], mask=ana.masks, return_copy=True
+)
+io.save_anndata(adata, prefix="IHC_wXOA", output_dir=ana.output_dir)
+fig, ax = ana.IHC.plot_segmentation(plgns=ana.masks, channels=channels)
+fig.savefig(ana.output_dir / "IHC_XOA_seg_on_IHC-DAPI-CD45.pdf")
+
 ana.IHC.cluster(resolution=0.175, exclude=["DAPI"])
-io.save_anndata(ana.IHC.adata, prefix="IHC", output_dir=Path(output_dir))
-ana.IHC.find_cell_contour(verbose=True)
+io.save_anndata(ana.IHC.adata, prefix="IHC", output_dir=ana.output_dir)
 fig, ax = ana.IHC.plot_segmentation(channels=channels)
 fig.savefig(ana.output_dir / 'IHC_CP_seg_on_IHC-DAPI.pdf')
 
-# if prior_type != "CP":
-#     ana.IHC.segment()
-#     ana.IHC.cluster(resolution=0.175, exclude=exclude)
-#     io.save_anndata(ana.IHC.adata, prefix="IHC", output_dir=Path(output_dir))
-# else:
-#     if ana.CP_params['style'] == 'pheno':
-#         ana.IHC.cluster(resolution=0.175, exclude=exclude)
-#         io.save_anndata(ana.IHC.adata, prefix="IHC", output_dir=Path(output_dir))
 
 ana.run_proseg()
 
