@@ -7,7 +7,28 @@ import polars as pl
 import scanpy as sc
 import squidpy as sq
 
-from phenium.exceptions import NotImplemented
+
+def save_settings(obj, file):
+    if obj.machine:
+        with open(file, "a") as f:
+            f.write(f"\n IST-machine: {obj.machine}")
+    if obj.prior_type:
+        with open(file, 'a') as f:
+            f.write(f'\n prior-type: {obj.prior_type}')
+    if obj.exclude:
+        with open(file, "a") as f:
+            f.write("\n excluded-markers:\n")
+            f.writelines(f"{p}\n" for p in obj.exclude)
+    if obj.channels:
+        with open(file, "a") as f:
+            f.write('\n segmentation-channels:\n')
+            f.writelines(f"{c}\n" for c in obj.channels)
+    if obj.cell_size:
+        with open(file, 'a') as f:
+            f.write(f'\n cell-size: {obj.cell_size} \n')
+    if obj.seed:
+        with open(file, 'a') as f:
+            f.write(f'\n seed: {obj.seed} \n')
 
 
 def save_phenium(obj, file):

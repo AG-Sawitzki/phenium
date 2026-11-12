@@ -1,15 +1,10 @@
-import itertools
 import math
 import os
-import time
 import xml.etree.ElementTree as ET
-from functools import partial
-from itertools import product
-from multiprocessing import Pool, cpu_count
+from multiprocessing import cpu_count
 from pathlib import Path, PurePath
 from typing import overload
 
-import anndata as ad
 import ants
 import cv2
 import geopandas as gpd
@@ -18,16 +13,12 @@ import ovrlpy
 import polars as pl
 import polars.selectors as cs
 import scanpy as sc
-import squidpy as sq
 import tifffile
 from cellpose.utils import outlines_list
 from numpy.typing import ArrayLike
 from shapely import Polygon
 from skimage.draw import polygon
-from skimage.filters import sobel
 from skimage.transform import rescale
-
-from phenium.exceptions import NotImplemented
 
 
 def depth(
@@ -333,6 +324,7 @@ def pixelate(
         columns = (
             (cs.ends_with('_location') & ~cs.starts_with('z'))
             | (cs.starts_with('vertex_') & ~cs.ends_with('z'))
+            | (cs.starts_with('x') | cs.starts_with('y'))
         )
         pixeled = table.select(columns) / pxsize
         pixeled = pixeled.select(columns.round(0))
@@ -567,12 +559,11 @@ def cell_contour(
     if cell_id != 0:
         bmask = masks == cell_id
         if bmask.sum() > 3:
-            cntrs = cv2.findContours(
+            cntrs, _ = cv2.findContours(
                 bmask.astype(np.uint8),
                 mode=cv2.RETR_EXTERNAL,
-                method=cv2.CHAIN_APPROX_NONE,
+                method=cv2.CHAIN_APPROX_SIMPLE,
             )
-            cntrs = cntrs[-2]
             cmax = np.argmax([c.shape[0] for c in cntrs])
             pix = cntrs[cmax].astype(int).squeeze()
             if len(pix) > 4:
@@ -833,31 +824,26 @@ def run_leiden(
 
 # function form stackoverflow
 # adapted to return shapely Polygons
-def process_roi(masks: ArrayLike) -> gpd.GeoDataFrame:
+def process_roi(masks: ArrayLike, cell_id_start: int = 0) -> gpd.GeoDataFrame:
     """
     Get the polgyons from the prediction-masks using cellpose.utils functions.
 
-    Saves them as a GeoDataFrame (geojson)
-
     Parameters
     ----------
-        npy_data : ArrayLike
+        masks : ArrayLike
             The numpy.ndarray of the masks.
-        npy_base_output_path : Path
-            Path to save the geojson.
 
     Returns
     ----------
-        out : None
-            Automatically saves the GDF under npy_base_output_path.
+        out : GeoDataFrame
+            .
     """
-    print(" - Extracting ROI")
     masks = masks.squeeze()
     # change the index order:
     # first the cell then the layer it is on.
     # thus one would know how the same cell looks on different layers
-    data = {"cell": [], "layer": [], "geometry": []}
     if masks.ndim == 3:
+        data = {"cell": [], "layer": [], "geometry": []}
         zs = min(masks.shape)
         posZ = masks.shape.index(zs)
         for z in range(zs):
@@ -869,21 +855,17 @@ def process_roi(masks: ArrayLike) -> gpd.GeoDataFrame:
                 mask_z = masks[..., z]
             print(f" - Layer {z}")
             coords_list = outlines_list(mask_z)
-            i = 1
             for coords in coords_list:
                 data["layer"].append(z)
-                data["name"].append(f"cell_{i}")
+                data["name"].append(cell_id_start)
                 data["geometry"].append(Polygon(coords))
-                i += 1
+                cell_id_start += 1
     else:
+        data = {"cell": [], "geometry": []}
         coords_list = outlines_list(masks)
-        i = 1
         for coords in coords_list:
-            data["layer"].append(np.nan)
-            data["cell"].append(f"cell_{i}")
+            data["cell"].append(cell_id_start)
             data["geometry"].append(Polygon(coords))
-            i += 1
+            cell_id_start += 1
     gdf = gpd.GeoDataFrame(data=data)
-    gdf.set_index(["layer", "name"])
-    print(" - Saving GeoDataFrame")
     return gdf

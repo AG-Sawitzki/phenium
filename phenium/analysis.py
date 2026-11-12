@@ -1,8 +1,6 @@
-import numpy as np
 import ovrlpy
 from shapely import Point
 
-from phenium.exceptions import NotImplemented
 from phenium.utils import transcripts_for_ovrlpy
 
 

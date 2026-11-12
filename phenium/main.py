@@ -1,5 +1,6 @@
 import gc
 import math
+import random
 
 # from copy import deepcopy
 # from dataclasses import dataclass
@@ -35,17 +36,15 @@ from scipy import stats
 from scipy.io import loadmat, mmread
 from scipy.sparse import csr_matrix
 from shapely import transform
-from shapely.geometry import Point
 from skimage.draw import polygon
 from skimage.transform import rescale
 
-from phenium.io import save_anndata
+from phenium.io import load_plgns, save_anndata, save_settings
 from phenium.plot import polygon_overlay
 from phenium.segment import proseg_wrapper
 from phenium.utils import (
     bboxes_to_sections,
     boundaries_to_mask,
-    cell_contour,
     cell_loc,
     chunk_size,
     filter_by_location,
@@ -53,6 +52,7 @@ from phenium.utils import (
     get_biomarkers,
     get_pixel_size,
     pixelate,
+    process_roi,
     relative,
     run_leiden,
     scale_coords,
@@ -468,7 +468,7 @@ class IMG:
         self,
         masks: ArrayLike | None = None,
         tile_size: int = 64,
-        verbose: bool = False,
+        verbose: bool = True,
     ):
         if masks is None:
             masks = self.masks.copy()
@@ -478,7 +478,7 @@ class IMG:
         else:
             _, y, x = masks.shape
 
-        data = {'cell': [], 'geometry': []}
+        data = []
         if verbose:
             pbar = tqdm.tqdm(total=len(self.cell_loc))
         for cid, (x_c, y_c) in enumerate(self.cell_loc):
@@ -491,16 +491,15 @@ class IMG:
                 x_high = min(x, x_c + tile_size)
 
                 mask = masks[y_low:y_high, x_low:x_high]
-                func = partial(cell_contour, masks=mask)
-                plgn = func(cid)
-                plgn = transform(plgn, lambda x: x + [x_low, y_low])
-                data['cell'].append(cid)
-                data['geometry'].append(plgn)
+                mask = np.uint32(mask == cid)
+                gdf = process_roi(mask, cell_id_start=cid)
+                gdf.geometry = transform(gdf.geometry, lambda x: x + [x_low, y_low])
+                data.append(gdf)
                 if verbose:
                     pbar.update(1)
         if verbose:
             pbar.close()
-        self.plgns = gpd.GeoDataFrame(data)
+        self.plgns = pd.concat(data)
         gc.collect()
 
 
@@ -537,9 +536,15 @@ class IMG:
         mask: bool | None = None,
         return_copy: bool = False,
     ):
-        mask = mask.astype(int)
+        if mask is not None:
+            mask = mask.astype(int)
+        else:
+            try:
+                mask = self.masks.copy()
+            except AttributeError:
+                raise AttributeError('No mask given. IMG has no segmentation mask.')
+
         self.make_feature_matrix(masks=mask)
-        # self.find_cell_loc()
 
         adata = self._anndata()
 
@@ -792,11 +797,13 @@ class Phenium:
         "channels",
         "config",
         "counts",
+        "exclude",
         "machine",
         "masks",
         "output_dir",
         "prior_type",
         "scaling_factor",
+        "seed",
         "sub_adata",
     ]
     def __init__(
@@ -807,9 +814,9 @@ class Phenium:
         config_path: str | PurePath,
         machine: str = 'xenium',
         prior_type: str = '',
-        channels: tuple = (None, None),
+        channels: tuple | None = None,
         exclude: list[(str | int), ...] | None = None,
-        cell_size: int = 5,
+        cell_size: int = 8,
         seed: int| None = None,
     )-> None:
         self.SRT_dir = Path(SRT_dir)
@@ -824,7 +831,9 @@ class Phenium:
         self.machine = machine
         self.prior_type = prior_type
         self.channels = channels
+        self.exclude = exclude
         self.cell_size = cell_size
+        self.seed = seed
 
         self.XMI = IMG(
             self.SRT_dir / 'morphology_focus/ch0000_dapi.ome.tif'
@@ -846,10 +855,18 @@ class Phenium:
 
         self.IST = IST(self.SRT_dir, self.XMI.pxsize[0])
 
+        save_settings(self, self.output_dir / 'settings.txt')
+
+        if seed is not None:
+            random.seed(seed)
+            np.random.seed(seed)
+            print(f'Set seed to {seed}')
+
         print(
             f'Initialized. \n'
             f'Review marked images in {self.output_dir}.'
         )
+
 
     @property
     def prior_path(self):
@@ -957,7 +974,7 @@ class Phenium:
         """
         WIP as it is very slow.
         """
-        path = self.SRT_dir / 'cell_boundaries.parquet'
+        path = self.SRT_dir / 'nucleus_boundaries.parquet'
         table = pl.read_parquet(path)
         ftable = self.filter_for_section(table)
         ptable = pixelate(ftable, self.XMI.pxsize[0])
@@ -966,6 +983,8 @@ class Phenium:
             ptable,
             self.XMI.roi.shape[self.XMI.axes['y']:self.XMI.axes['x']+1],
         )
+
+        masks = masks.astype(np.uint32)
 
         self.prior_path = Path(
             self.output_dir / f'XOA_masks_{self.SRT_section}.npy'
@@ -976,6 +995,19 @@ class Phenium:
             masks,
             allow_pickle=True
         )
+
+        path = self.SRT_dir / 'cell_boundaries.parquet'
+        table = pl.read_parquet(path)
+        ftable = self.filter_for_section(table)
+        ptable = pixelate(ftable, self.XMI.pxsize[0])
+        # print(table.head(n=5))
+        masks = boundaries_to_mask(
+            ptable,
+            self.XMI.roi.shape[self.XMI.axes['y']:self.XMI.axes['x']+1],
+        )
+
+        masks = masks.astype(np.uint32)
+
         self.masks = masks
 
         # function for vertex -> gdf
@@ -1057,7 +1089,7 @@ class Phenium:
 
         if self.prior_type == 'CP':
             style = self.CP_params['style']
-            channels = self.channels
+            channels = ['DAPI']
             if style == 'focus':
                 masks = self.XMI.segment(channels=channels, return_copy=True)
             elif style == 'pheno':
@@ -1067,11 +1099,12 @@ class Phenium:
                     'Not implemented to segment on'
                     f'{self.CP_params['style']}'
                 )
-            self.masks = masks
+            masks = masks.astype(np.uint32)
             self.prior_path = Path(
                 self.output_dir / f"CP_masks_{self.SRT_section}_{style}.npy"
             )
-            np.save(self.prior_path, np.uint32(masks), allow_pickle=True)
+            np.save(self.prior_path, masks, allow_pickle=True)
+            self.masks = masks
         elif self.prior_type == 'XOA':
             _ = self._XOA_masks()
         else:
@@ -1235,17 +1268,20 @@ class Phenium:
 
     def assign_celltype(
         self,
-        cellid_celltype_dict
+        cluster_celltype_dict: dict | None,
+        adata: ad.AnnData | None = None, 
     ):
-        ply_path = self.output_dir / "cell-polygon-layers.geojson.gz"
-        gdf = gpd.read_file(ply_path.as_uri().replace("file", "gzip"))
-
-        if cellid_celltype_dict is None:
-            oci_ci_dict = self.adata.obs.cell.to_dict()
-            oci_leiden_dict = self.adata.obs.leiden.to_dict()
-            cellid_celltype_dict = {
-                oci_ci_dict[oci]: oci_leiden_dict[oci] for oci in self.adata.obs_names
-            }
+        gdf = load_plgns(self.output_dir / "cell-polygon-layers.geojson.gz")
+        if adata is None:
+            adata = self.adata.copy()
+        if cluster_celltype_dict is not None:
+            adata.obs.leiden = adata.obs.leiden.map(cluster_celltype_dict)
+        
+        oci_ci_dict = adata.obs.cell.to_dict()
+        oci_leiden_dict = adata.obs.leiden.to_dict()
+        cellid_celltype_dict = {
+            oci_ci_dict[oci]: oci_leiden_dict[oci] for oci in adata.obs_names
+        }
         fltr = [idx in cellid_celltype_dict for idx in gdf.cell]
         gdf = gdf[fltr]
         gdf["celltype"] = gdf.apply(lambda row: cellid_celltype_dict[row.cell], axis=1)
@@ -1254,9 +1290,9 @@ class Phenium:
         
         return gdf
 
-    def function_name(
+    def deconvolute(
         self,
-        cellid_celltype_dict,
+        cluster_celltype_dict,
         celltype_prot_dict,
         img=None,
         biomarkers=None,
@@ -1268,7 +1304,7 @@ class Phenium:
             img = img.view()
         else:
             raise TypeError(
-                f'`img` is not `ndarray`, but {type(img)}'
+                f'Given `img` is not `numpy.ndarray`, but {type(img)}'
             )
 
         if biomarkers is None:
@@ -1279,7 +1315,7 @@ class Phenium:
             raise TypeError(
                 f"`biomarkers` is not `dict`, but {type(biomarkers)}"
             )
-        gdf = self.assign_celltype(cellid_celltype_dict)
+        gdf = self.assign_celltype(cluster_celltype_dict, None)
         gdf = pixelate(gdf, self.IST.pxsize)
         if celltype_prot_dict is None:
             celltype_prot_dict = dict(
@@ -1304,7 +1340,7 @@ class Phenium:
         if verbose:
             pbar = tqdm.tqdm(total=len(gdf.index))
         for layer in range(gdf.layer.max()+1):
-            for celltype in range(int(gdf.celltype.max())+1):
+            for celltype in list(celltype_prot_dict.keys()):
                 pbar.set_description(f'Processing L{layer}:CT{celltype}')
                 prots = celltype_prot_dict[str(celltype)]
                 if isinstance(prots, list):
@@ -1329,7 +1365,7 @@ class Phenium:
                     vrtcs = coords.loc[loc].to_numpy()
                     rr, cc = polygon(vrtcs[:,1], vrtcs[:,0])
                     for channel in channels:
-                        new_img[layer, channel, rr, cc] = img[channel, rr, cc] / self.layers
+                        new_img[layer, channel, rr, cc] = img[channel, rr, cc]
                     pbar.update(1)
         if verbose:
             pbar.close()

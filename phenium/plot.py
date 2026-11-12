@@ -1,6 +1,6 @@
 import os
 from copy import deepcopy
-from pathlib import Path, PurePath
+from pathlib import PurePath
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
@@ -15,7 +15,6 @@ from microfilm.microplot import microshow
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 from numpy.typing import ArrayLike
 from scipy import stats
-from shapely import Point
 
 
 def polygon_overlay(
@@ -74,7 +73,7 @@ def polygon_overlay(
     ax.add_artist(asb)
 
     ax.set_xlim(0, dimx)
-    ax.set_ylim(0, dimy)
+    ax.set_ylim(dimy, 0)
 
     if img.ndim == 3:
         img_norm_m = img_norm.reshape((c, dimy, dimx))
@@ -105,35 +104,32 @@ def polygon_overlay(
 
 def scatter_doublets(
     stuff: dict[dict, ...],
-    ax: Axes,
     fig: Figure,
+    ax: Axes,
     doublets: pl.DataFrame
 ) -> tuple[Axes, Figure]:
-    for k, v in stuff.values():
+    for k, v in stuff.items():
         idxs = [int(idx) for idx in v]
         doublets_to_scatter = doublets[idxs]
-        x = doublets_to_scatter.select('x').to_numpy()
-        y = doublets_to_scatter.select('y').to_numpy()
+        x = doublets_to_scatter.select('x').to_numpy().ravel()
+        y = doublets_to_scatter.select('y').to_numpy().ravel()
 
-        test_val = next(iter(v.values()))
-
-        if len(test_val) > 1:
-            if isinstance(test_val, Point):
-                color = 'gray'
-            else:
-                color = 'green'
-        else:
+        if k == 'single_cell':
+            color = 'yellow'
+        if k == 'double_cell':
+            color = 'green'
+        if k == 'no_cell':
             color = 'red'
 
-        ax.scatter(x, y, c=color)
+        ax.scatter(x, y, c=color, s=500)
 
-        return tuple(ax, fig)
+        return fig, ax
 
 
 def plot_spatial_transcripts(
     table,
-    ax,
     fig,
+    ax,
     pseudo_3d
 ):
     if pseudo_3d:
@@ -178,8 +174,12 @@ def plot_transcripts_vs_z(
     if lingres:
         gres = stats.linregress(axis_arr, z_arr)
         ax.plot(axis_arr, (gres.intercept + gres.slope*axis_arr), c="#EA5451")
+        ax.set_title(
+            f"Distribution of along {axis}-axis."
+            f"Slope: {gres.slope}; Intercept: {gres.intercept}."
+        )
     ax.set_xlabel(f'{axis}_location in px')
-    ax.set_ylabel('z_location in um')
+    ax.set_ylabel('z_location in µm')
     return fig, ax
 
 
@@ -201,7 +201,7 @@ def plot_z_distribution(
     z_density = z_kde(z_space)
 
     ax.plot(z_space, z_density, c="#009AA9")
-    ax.set_xlabel('z_location in um')
+    ax.set_xlabel('z_location in µm')
     ax.set_ylabel('fraction of transcripts')
 
     if cutoff:
@@ -223,5 +223,6 @@ def plot_z_distribution(
                 z_max = z_val
 
         ax.vlines([z_min, z_max], z_density.min(), z_density.max(), colors="#EA5451")
+        ax.set_title(f'Distribution of along Z-axis. Cutoff at {z_min} and {z_max}.')
 
     return fig, ax

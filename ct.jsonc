@@ -1,0 +1,49 @@
+{
+    "Epithel": ["Epcam", "PancK", "S100A9"],
+    "Lung alveolar cells": ["Caveolin"],
+    "t-cells": [
+        "CD3e",
+        "CD8",
+        "CD4",
+        // "TCRgd",
+        // "Osteopontin",
+        "CD45R/B220"
+        // "FoxP3",
+        // "TcRab"
+    ],
+    "membrane": ["CD44", "Vimentin"],
+    "b-cells": ["CD19", "CD20",  "CD45R/B220"],
+    "immune cells": [
+        "CD45",
+        "MHC II"
+        // "Osteopontin"
+    ],
+    // "activation marker": ["CD69", ""],
+    "adhesion marker": [
+        "CD31",
+        "ITGB1"
+        // "CD62L"
+    ],
+    "macrophages": [
+        // "CD206",
+        "CD68",
+        // "CD16",
+        "CD11b",
+        "Iba1",
+        "F4/80",
+        "S100A9"
+    ],
+    "DC": [
+        // "CD206",
+        "CD68"
+        // "CD11c"
+    ],
+    "proliferation": ["Ki67"],
+    // "scavenger receptor": ["CD36", ""],
+    "plasma": ["CD138"],
+    "red blood": ["Ter119"],
+    "granulocytes": ["Ly6g"],
+    "monocytes": ["Ly6g"],
+    "neutrophils": ["Ly6g", "S100A9"],
+    "lung mesenchyme": ["Col1A1"]
+}
