@@ -1,7 +1,15 @@
 import ovrlpy
-from shapely import Point
+from shapely import Point, area, intersection
 
+from phenium.plot import spatial_transcripts, transcripts_vs_z, z_distribution
 from phenium.utils import transcripts_for_ovrlpy
+
+
+def z_spread(table):
+    ax = spatial_transcripts(table)
+    ax = transcripts_vs_z(table)
+    ax = z_distribution(table)
+    return ax
 
 
 def ovrlpy_analysis(transcripts, machine, **kwargs):
@@ -57,7 +65,7 @@ def vis_doublets(doublets, masks):
     # )
 
     # compare masks and doublets
-    stuff = {"no_cell": {}, "single_cell": {}, "double_cell": {}}
+    ovrlpy_doublets = {"no_cell": {}, "single_cell": {}, "double_cell": {}}
     for idx, row in enumerate(doublets.iter_rows(named=True)):
         pnkt = Point(row["x"], row["y"]) # perhaps not a point but a small square around that point?
         fltr = masks["geometry"].covers(pnkt)
@@ -65,13 +73,13 @@ def vis_doublets(doublets, masks):
             plgns = masks[fltr]
             cells = plgns.cell.unique()
             if cells.size > 1:
-                stuff["double_cell"][str(idx)] = cells
+                ovrlpy_doublets["double_cell"][str(idx)] = cells
             else:
-                stuff["single_cell"][str(idx)] = cells
+                ovrlpy_doublets["single_cell"][str(idx)] = cells
         else:
-            stuff["no_cell"][str(idx)] = pnkt
+            ovrlpy_doublets["no_cell"][str(idx)] = pnkt
 
-    success_rate = len(stuff["double_cell"]) / len(doublets)
+    success_rate = len(ovrlpy_doublets["double_cell"]) / len(doublets)
 
     # fig, ax = plt.subplots()
     # _scatter = ax.scatter(
@@ -85,10 +93,10 @@ def vis_doublets(doublets, masks):
     # _ = ax.set_aspect("equal")
     # _ = fig.colorbar(_scatter, ax=ax)
 
-    return success_rate, stuff
+    return success_rate, ovrlpy_doublets
 
 
-def verify_doublets(adata, stuff):
+def verify_doublets(adata, ovrlpy_doublets):
     pass
     # for each doublet
         # identify celltypes
@@ -109,12 +117,28 @@ def foo(row, gdf, midx):
     return {cell: {layer: list(doublets.cell)}}
 
 
-def proseg_doublets(gdf):
-    other_stuff = {}
+def proseg_doublets(gdf, proseg_doublets):
+    proseg_doublets = {}
     sjnd = gdf.sjoin(gdf, how='inner', predicate='intersects')
     vrlps = sjnd[sjnd.cell_left != sjnd.cell_right]
     cids = set(vrlps.cell_left)
     for cid in cids:
-        other_stuff[cid] = list(set(vrlps[vrlps.cell_left == cid].cell_right))
-    return other_stuff
+        proseg_doublets[cid] = list(set(vrlps[vrlps.cell_left == cid].cell_right))
+    return proseg_doublets
     # for cell check if any layer overlaps with any other cell
+
+
+def IoU(plgn1, plgn2, gdf):
+    I = area(intersection(plgn1, plgn2))
+    IoU = I / (area(plgn1) + area(plgn2) - I)
+    return IoU
+
+
+def doublet_size(gdf):
+    sjnd = gdf.sjoin(gdf, how='inner', predicate='intersects')
+    vrlps = sjnd[sjnd.cell_left != sjnd.cell_right]
+    vrlps['geometry_right'] = gdf.geometry[vrlps.index_right].to_list()
+    vrlps['IoU'] = vrlps.apply(
+        lambda x: IoU(x.geometry, x.geometry_right, gdf), axis=1
+    )
+    return vrlps

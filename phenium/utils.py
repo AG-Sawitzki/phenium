@@ -15,7 +15,6 @@ import polars.selectors as cs
 import scanpy as sc
 import tifffile
 from cellpose.utils import outlines_list
-from numpy.typing import ArrayLike
 from shapely import Polygon
 from skimage.draw import polygon
 from skimage.transform import rescale
@@ -84,7 +83,7 @@ def to_cli(
 
 def find_rois(
     shape_org: tuple,
-    img_subres: ArrayLike,
+    img_subres: np.ndarray,
 ):
     """
     Sort the contours by area.
@@ -93,7 +92,7 @@ def find_rois(
     ----------
         shape_org : tuple
             Max resolution of img.
-        img_subres : ArrayLike
+        img_subres : np.ndarray
             Lowest subresolution of image.
 
     Returns
@@ -142,7 +141,7 @@ def find_rois(
 
 @overload
 def bboxes_to_sections(
-    bboxes: list[ArrayLike],
+    bboxes: list[np.ndarray],
     shape_org: tuple,
     subres: tuple,
     buffer: int = 128
@@ -150,11 +149,11 @@ def bboxes_to_sections(
     pass
 @overload
 def bboxes_to_sections(
-    bboxes: list[ArrayLike],
+    bboxes: list[np.ndarray],
     shape_org: tuple,
-    subres: ArrayLike,
+    subres: np.ndarray,
     buffer: int = 128
-) -> tuple[dict, ArrayLike]:
+) -> tuple[dict, np.ndarray]:
     pass
 def bboxes_to_sections(
     bboxes,
@@ -429,28 +428,32 @@ def filter_by_location(
     return table
 
 
-def denoise_image(image, noise_model="Rician"):
-    image = np.int32(image)
-
-    image_ant = ants.from_numpy(image)
-    image_denoised = ants.ops.denoise_image(
-        image_ant,
-        mask=None,
-        shrink_factor=1,
-        p=1,
-        r=2,
-        noise_model=noise_model,
-    )
-
-    return image_denoised.numpy()
-
-
 def transform_image(
-    moving,
-    fixed,
-    scaling_factor,
-    reg_fwd
-):
+    moving: np.ndarray,
+    fixed: np.ndarray,
+    scaling_factor: float,
+    reg_fwd: list | str
+)-> np.ndarray:
+    """
+    Transform the input image `moving` to be registered with `fixed`.
+    Scales `moving` with `scaling_factor`.
+
+    Parameters
+    ----------
+        moving: numpy.ndarray
+            Array of an image.
+        fixed: numpy.ndarray
+            Array of an image.
+        scaling_factor: float
+            Factor that scales `moving` to `fixed`.
+        reg_fwd: list or str
+            ANTsPy forward registration-matrix.
+
+    Returns
+    -------
+        out: numpy.ndarray
+            Registered array.
+    """
     moving = rescale(
         moving,
         scaling_factor,
@@ -473,22 +476,13 @@ def transform_image(
         interpolator="nearestNeighbor",
     )
 
-    # moving_denoised = ants.ops.denoise_image(
-    #     moving_transformed,
-    #     mask=None,
-    #     shrink_factor=1,
-    #     p=1,
-    #     r=2,
-    #     noise_model='Rician'
-    # )
-
     return moving_transformed.numpy()
 
 
 def value_at_cell(
     cell_id: int,
-    masks: ArrayLike,
-    roi: ArrayLike
+    masks: np.ndarray,
+    roi: np.ndarray
 )-> float:
     """
     Retrieve the total signal over a cell, defined by a mask.
@@ -513,8 +507,8 @@ def value_at_cell(
 
 def cell_loc(
     cell_id: int,
-    masks: ArrayLike,
-)-> ArrayLike:
+    masks: np.ndarray,
+)-> np.ndarray:
     """
     Retrieve the first pixel part of `cell_id` in `masks`.
 
@@ -601,7 +595,7 @@ def _draw_mask(
 def boundaries_to_mask(
     table: pl.DataFrame,
     shape: tuple,
-) -> ArrayLike | dict:
+) -> np.ndarray | dict:
     """
     Draw the nodes defined in `_bondaries.parquet` as polygons into an array.
 
@@ -616,7 +610,7 @@ def boundaries_to_mask(
     
     Returns
     -------
-        out : ArrayLike
+        out : np.ndarray
             numpy array with each cell_mask
     """
     masks = np.zeros(shape)
@@ -633,29 +627,29 @@ def boundaries_to_mask(
             cell_ids,
             masks,
         )
-    
-    # for idxs in np.array_split(np.arange(len(cell_ids)), (len(cell_ids)//5)):
-    #     kwargs = {
-    #         "table": table,
-    #         "cell_ids": cell_ids,
-    #         "masks": np.zeros(shape),
-    #     }
-    #     idxs_e = np.expand_dims(idxs, 0)
-    #     msks = np.apply_along_axis(
-    #         _draw_mask, 0, idxs_e,
-    #         **kwargs
-    #     )
-    #     masks += msks.sum(axis=-1)
 
     return masks
 
 
 def transcripts_for_ovrlpy(
     machine: str,
-    transcripts: pl.DataFrame | os.PathLike | PurePath,
+    transcripts: pl.DataFrame | str | PurePath,
 ) -> pl.DataFrame:
     """
     Rename the columns and filter the genes. Prepares the table for `ovrlpy`.
+
+    Parameters
+    ----------
+        machine: str
+            Indicates which processing steps `ovrlpy` takes.
+            Currently accepts only 'xenium'
+        transcripts: polars.DataFrame, str or PurePath
+            Table, or path to, of spatially-resolved transcripts.
+    
+    Returns
+    -------
+        out: polars.DataFrame
+            Table prepared for `ovrlpy`.
     """
     if machine == 'xenium':
         if isinstance(transcripts, (os.PathLike, str)):
@@ -721,7 +715,22 @@ def get_pixel_size(
     return float(px_size_X), float(px_size_Y), float(px_size_Z)
 
 
-def get_biomarkers(img_path):
+def get_biomarkers(
+    img_path: str | PurePath
+)-> dict[str: int]:
+    """
+    Retreive the biomarkers from a (qp)tiff.
+
+    Parameters
+    ----------
+        img_path: str or PurePath
+            Path to the image. Either a qptiff or tiff.
+    
+    Returns
+    -------
+        out: dict
+            Dictionary with key: Biomarker, value: layer/page.
+    """
     # function written based on grenkoca/qptifffile.
     biomarkers = {}
     suffix = Path(img_path).suffix
@@ -824,13 +833,13 @@ def run_leiden(
 
 # function form stackoverflow
 # adapted to return shapely Polygons
-def process_roi(masks: ArrayLike, cell_id_start: int = 0) -> gpd.GeoDataFrame:
+def process_roi(masks: np.ndarray, cell_id_start: int = 0) -> gpd.GeoDataFrame:
     """
     Get the polgyons from the prediction-masks using cellpose.utils functions.
 
     Parameters
     ----------
-        masks : ArrayLike
+        masks : np.ndarray
             The numpy.ndarray of the masks.
 
     Returns
@@ -869,3 +878,26 @@ def process_roi(masks: ArrayLike, cell_id_start: int = 0) -> gpd.GeoDataFrame:
             cell_id_start += 1
     gdf = gpd.GeoDataFrame(data=data)
     return gdf
+
+
+def factor(img1, img2):
+    """
+    Find the factor f = img1/img2.
+    """
+    img1 = img1.astype(np.float32)
+    img2 = img2.astype(np.float32)
+    fctrs = np.ones_like(img2, dtype=np.float32)
+    np.divide(img1, img2, out=fctrs, where=True, dtype=np.float32)
+    np.nan_to_num(fctrs, copy=False, nan=1)
+    return fctrs
+
+
+def apply_factor(img1, img2):
+    """
+    Find and apply the factor found with `factor().` 
+
+    """
+    fctrs = factor(img1.sum(axis=0), img2)
+    np.divide(img1, fctrs, out=img1, where=True, dtype=np.float32)
+    img1 = img1.astype(np.uint32)
+    return img1

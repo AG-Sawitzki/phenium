@@ -50,28 +50,35 @@ ana.prepare(4, 12, quick=True, verbose=True)
 adata = ana.IHC.cluster(
     resolution=0.175,
     exclude=["DAPI", "CD44", "Vimentin"],
-    mask=ana.masks,
+    masks=ana.masks,
     return_copy=True,
 )
 io.save_anndata(adata, prefix="IHC_wXOA", output_dir=ana.output_dir)
-fig, ax = ana.IHC.plot_segmentation(plgns=ana.masks, channels=channels)
+ax = ana.IHC.plot_segmentation(plgns=ana.masks, channels=channels)
+fig = ax.get_figure()
 fig.savefig(ana.output_dir / "plots/IHC_XOA_seg_on_IHC-DAPI-CD44.pdf")
+ax.clear()
+plt.close()
 
 ana.IHC.segment(channels=channels)
 ana.IHC.cluster(resolution=0.175, exclude=["DAPI", "CD44", "Vimentin"])
 io.save_anndata(ana.IHC.adata, prefix="IHC_wCP", output_dir=ana.output_dir)
-fig, ax = ana.IHC.plot_segmentation(channels=channels)
+ax = ana.IHC.plot_segmentation(channels=channels)
+fig = ax.get_figure()
 fig.savefig(ana.output_dir / 'plots/IHC_CP_seg_on_IHC-DAPI.pdf')
+ax.clear()
+plt.close()
 
 ana.run_proseg()
 
 masks = io.load_plgns(ana.output_dir / "cell-polygons.geojson.gz")
 masks = pixelate(masks, ana.XMI.pxsize[0])
 
-fig, ax = plt.subplots()
-fig, ax = plot.polygon_overlay(
+_, ax = plt.subplots()
+ax = plot.polygon_overlay(
     masks, ana.XMI.roi[0, :, :], fig, ax, ana.XMI.pxsize[0]
 )
+fig = ax.get_figure()
 fig.savefig(ana.output_dir / "plots/proseg_on_DAPI.pdf")
 
 ana.cluster(resolution=0.175, save=True)

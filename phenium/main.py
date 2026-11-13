@@ -31,7 +31,6 @@ import zarr
 from cellpose import models
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
-from numpy.typing import ArrayLike
 from scipy import stats
 from scipy.io import loadmat, mmread
 from scipy.sparse import csr_matrix
@@ -43,6 +42,7 @@ from phenium.io import load_plgns, save_anndata, save_settings
 from phenium.plot import polygon_overlay
 from phenium.segment import proseg_wrapper
 from phenium.utils import (
+    apply_factor,
     bboxes_to_sections,
     boundaries_to_mask,
     cell_loc,
@@ -116,30 +116,44 @@ class IMG:
 
     @property
     def lvl(self):
+        """
+        The count of resolutions in the zarr-object. 
+        """
         return len(self.zrr)
 
     @property
-    def axes(self):
-        with tifffile.TiffFile(self.path) as tif:
-            axes = tif.series[0].axes
-        x = axes.index('X')
-        y = axes.index('Y')
-        c = axes.index('C') if 'C' in axes else None
-        z = axes.index('Z') if 'Z' in axes else None
-        t = axes.index('T') if 'T' in axes else None
-        axes = {'x': x, 'y': y, 'c': c, 'z': z, 't': t}
-        return axes
+    def shape(self):
+        """
+        Shape of the highest resolution in the zarr-object
+        """
+        return self.zrr["0"].shape
 
     @property
-    def shape(self):
-        return self.zrr['0'].shape
+    def axes(self):
+        """
+        At what position in the is a axis located.
+        """
+        with tifffile.TiffFile(self.path) as tif:
+            axes = tif.series[0].axes
+        axs = {}
+        for ax in ['X', 'Y', 'Z', 'C', 'Z', 'T']:
+            pos = axes.index(ax) if ax in axes else None
+            if pos is not None:
+                axs[ax] = pos
+        return axs
 
     @property
     def pxsize(self):
+        """
+        Size of a pixel in x,y and z axis.
+        """
         return get_pixel_size(self.path)
 
     @property
     def roi(self):
+        """
+        Numpy array of sub-section in highest resolution zarr-object.
+        """
         try:
             return self._roi_adj
         except AttributeError:
@@ -154,11 +168,17 @@ class IMG:
 
     @property
     def all_biomarkers(self):
+        """
+        All biomarkers of the image. Before 'exclude'.
+        """
         biomarkers = get_biomarkers(self.path)
         return biomarkers
 
     @property
     def roi_biomarkers(self):
+        """
+        Biomarkers of the region of interest. After 'exclude'.
+        """
         biomarkers = {
             k: v for k, v in self.all_biomarkers.items() if v in self.selection
         }
@@ -170,12 +190,36 @@ class IMG:
 
     def find_affine(
         self,
-        fixed: ArrayLike,
+        fixed: np.ndarray,
         scaling_factor: float,
-        quick=False,
-        verbose=False,
-        matrix=False,
+        quick: bool = False,
+        matrix: bool = False,
+        verbose: bool = False,
     ) -> None:
+        """
+        Find the matrix to affine-transform this image to register with `fixed`.
+
+        Parameters
+        ----------
+            fixed: numpy.ndarray
+                Array of image to register `self` to.
+            scaling_factor: float
+                Factor to scale `self` to be of the same size as `fixed`.
+            quick: bool
+                If `True` uses 'antsRegistrationSyNQuick[r]' and not 'antsRegistrationSyN[r]'.
+                Default is `False`.
+            matrix: bool
+                If `True` assigns the variable `affine_transform`.
+                Default is `False`.
+            verbose: bool
+                If `True` prints the ANTsPy verbose-output.
+                Default is `False`.
+
+        Returns
+        -------
+            out: None
+                Assigns the forward and reverse transform-matrix, the scaling factor and new shape.
+        """
         moving = rescale(
             self.roi[0, :, :],
             scaling_factor,
@@ -225,12 +269,29 @@ class IMG:
 
     def adjust(
         self,
-        verbose: bool = True,
         parallel: bool = True,
         return_copy: bool = False,
-    ) -> None:
+        verbose: bool = False,
+    ) -> None | np.ndarray:
         """
         Adjusts the roi to fit the input image from `find_affine`.
+
+        Pramaters
+        ---------.
+            parallel: bool
+                If `True` splits the process into two, running parallel.
+                Default is `True`.
+            return_copy: bool
+                If `True` returns the adjusted image and does not update `roi`.
+                Default is `False`.
+            verbose: bool
+                If `True` prints a progress-bar indicating time and layer.
+                Default is `False`
+
+        Returns
+        -------
+            out: None or numpy.ndarray
+                If `return_copy` the adjusted image is returned. Otherwise it replaces `roi`.
         """
         _ = torch.cuda.empty_cache()
         iterations = list(self.roi_biomarkers.values())
@@ -282,10 +343,10 @@ class IMG:
 
     def segment(
         self,
-        channels: list[int | str] | tuple[int | str],
+        channels: list[int | str, ...] | tuple[int | str, ...],
         chunks: int = 4,
         return_copy: bool = False,
-        verbose: bool = True,
+        verbose: bool = False,
         # mkwargs,
         # ekwargs
         gpu=True,
@@ -305,8 +366,34 @@ class IMG:
         augment=False,
         tile_overlap=0.1,
         compute_masks=True,
-    ):
+    ) -> None | np.ndarray:
+        """
+        Segment the region of interest using Cellpose.
 
+        Parameters
+        ----------
+            channels: list[int | str, ...] or tuple[int | str, ...]
+                Channels to use as input for segmentation.
+            chunks: int
+                Amount of sub-images the roi is split into.
+                Must be a square number.
+                Default is 4.
+            return_copy: bool
+                If `True` returns the mask of roi and does not add `masks`.
+                Default is `False`.
+            verbose: bool
+                If `True` prints a progress-bar indictating time and sub-image.
+                Default is `False`.
+
+        Returns
+        -------
+            out: None or numpy.ndarray
+                If `return_copy` then an array containing the masks is returned. Otherwise `masks` is added.
+
+        Cellpose-Arguments
+        ------------------
+            See https://github.com/MouseLand/cellpose/cellpose/models.py for a description of parameters.
+        """
         if not isinstance(channels, list):
             channels = list(channels)
 
@@ -399,10 +486,31 @@ class IMG:
 
     def make_feature_matrix(
         self,
-        masks: ArrayLike | None = None,
+        masks: np.ndarray | None = None,
         tile_size: tuple[int, int] | int = 64,
         verbose: bool = False,
     )-> None:
+        """
+        Compute the feature-matrix of roi using `masks`.
+
+        Parameters
+        ----------
+            masks: numpy.ndarray or None
+                The segmentation-mask to use for constructing the feature-matrix.
+                If not given, tries using self.masks.
+                Optional.
+            tile_size: tuple[int, int] or int
+                Size of a tile in (x,y) or x=y direction.
+                Default is 64.
+            verbose:
+                If `True` prints a progress-bar indicating time and tile.
+                Default is `False`.
+        
+        Returns
+        -------
+            out: None
+                Assigns the matrix to `feature_matrix` and the cell-locations to `cell_loc`.
+        """
         if masks is None:
             masks = self.masks.copy()
         if masks.shape != self.roi.shape[1:]:
@@ -466,10 +574,31 @@ class IMG:
 
     def find_cell_contour(
         self,
-        masks: ArrayLike | None = None,
+        masks: np.ndarray | None = None,
         tile_size: int = 64,
-        verbose: bool = True,
+        verbose: bool = False,
     ):
+        """
+        Finds the contours of `masks` and assigns them in a geopandas.GeoDataFrame to `plgns`.
+
+        Parameters
+        ----------
+            masks: numpy.ndarray or None
+                The segmentation-mask to find the boundaries of.
+                If not given, tries using self.masks.
+                Optional.
+            tile_size: tuple[int, int] or int
+                Size of a tile in (x,y) or x=y direction.
+                Default is 64.
+            verbose:
+                If `True` prints a progress-bar indicating time and cell_id.
+                Default is `False`.
+        
+        Returns
+        -------
+            out: None
+                Assigns the boundaries to `plgns`..
+        """
         if masks is None:
             masks = self.masks.copy()
 
@@ -533,18 +662,41 @@ class IMG:
         self,
         resolution: float = 0.175,
         exclude: list[str, ...] | tuple[str, ...] | None = None,
-        mask: bool | None = None,
+        masks: np.ndarray | None = None,
         return_copy: bool = False,
-    ):
-        if mask is not None:
-            mask = mask.astype(int)
+    )-> None | ad.AnnData:
+        """
+        Cluster the feature_matrix using Leiden.
+
+        Parameters
+        ----------
+            resolution: float
+                Resolution of the Leiden clustering.
+                Default is 0.175
+            exclude: list[str, ...], tuple[str, ...] or None
+                Iterable of proteins to exclude from the clustering.
+            masks: numpy.ndarray or None
+                The masks to use to construct the feature-matrix from.
+                If not given, tries `masks`.
+                Optional.
+            return_copy: bool
+                If `True` returns the clustered anndata-object and does not add `adata`.
+                Default is `False`.
+
+        Returns
+        -------
+            out: None or anndata.AnnData
+                If `return_copy` then the anndata-object is returned. Otherwise assigns the result to `adata`.
+        """
+        if masks is not None:
+            masks = masks.astype(int)
         else:
             try:
-                mask = self.masks.copy()
+                masks = self.masks.copy()
             except AttributeError:
                 raise AttributeError('No mask given. IMG has no segmentation mask.')
 
-        self.make_feature_matrix(masks=mask)
+        self.make_feature_matrix(masks=masks)
 
         adata = self._anndata()
 
@@ -570,9 +722,27 @@ class IMG:
 
     def plot_segmentation(
         self,
-        plgns: gpd.GeoDataFrame | ArrayLike | None = None,
+        plgns: gpd.GeoDataFrame | np.ndarray | None = None,
         channels: list[str | int, ...] | int | str = 0
-    )-> tuple[Figure, Axes]:
+    )-> Axes:
+        """
+        Plot the segmentation masks of `plgns` onto the region of interest.
+
+        Parameters
+        ----------
+            plgns: geopandas.GeoDataFrame, numpy.ndarray or None
+                The segmentation masks as either a geopandas.GeoDataFrame or numpy.ndarray.
+                If not given, tries `plgns`.
+                Optional.
+            channels: list[str | int, ...], int or str
+                Channels to use as background of the plot.
+                Default is 0, i.e. the first channel.
+
+        Returns
+        -------
+            out: tuple[matplotlib.figure.Figure, matplotlib.axis.Axes]
+                The axis onto which was plotted.
+        """
         if plgns is None:
             try:
                 plgns = self.plgns
@@ -603,17 +773,17 @@ class IMG:
                 f"\t {type(channels[0])}"
             )
 
-        fig, ax = plt.subplots()
-        fig, ax = polygon_overlay(
+        _, ax = plt.subplots()
+        ax = polygon_overlay(
             polygons=plgns,
             img=self.roi[channels, ...],
-            ax=ax, fig=fig,
+            ax=ax,
             pxsize=self.pxsize[0]
         )
 
         gc.collect()
 
-        return fig, ax
+        return ax
 
 
 class IST:
@@ -649,10 +819,16 @@ class IST:
 
     @property
     def fov_names(self):
+        """
+        List of names of the FOVs.
+        """
         return list(set(self.table['fov_name']))
 
     @property
     def roi(self):
+        """
+        Sub-table with all transcripts in chosen bounds. 
+        """
         return self._roi
 
     @roi.setter
@@ -668,7 +844,23 @@ class IST:
             new_coords
         )
 
-    def adjust_z(self, return_copy=False):
+    def adjust_z(
+        self,
+        return_copy: bool = False
+    )-> None | pl.DataFrame:
+        """
+        Adjust the z-location of the `table`-attribute.
+
+        Parameters
+        ----------
+            return_copy: bool
+                If `True` returns the table and does not replace `table`.
+        
+        Returns
+        -------
+            out: None or polars.DataFrame
+                If `return_copy` then the z-adjusted table is returned. Otherwise `table` will be replaced.
+        """
         table = self.table
         x = table['x_location'].to_numpy()[::100]
         y = table['y_location'].to_numpy()[::100]
@@ -745,12 +937,11 @@ class IST:
             return table
         else:
             self.table = table
-            return
 
 
 class Phenium:
     """
-    ...
+    Class for combinging Xenium and PhenCycler and to deconvolute PhenoCycler.
 
     Parameters
     ----------
@@ -981,7 +1172,7 @@ class Phenium:
         # print(table.head(n=5))
         masks = boundaries_to_mask(
             ptable,
-            self.XMI.roi.shape[self.XMI.axes['y']:self.XMI.axes['x']+1],
+            self.XMI.roi.shape[self.XMI.axes['Y']:self.XMI.axes['X']+1],
         )
 
         masks = masks.astype(np.uint32)
@@ -1003,7 +1194,7 @@ class Phenium:
         # print(table.head(n=5))
         masks = boundaries_to_mask(
             ptable,
-            self.XMI.roi.shape[self.XMI.axes['y']:self.XMI.axes['x']+1],
+            self.XMI.roi.shape[self.XMI.axes['Y']:self.XMI.axes['X']+1],
         )
 
         masks = masks.astype(np.uint32)
@@ -1255,48 +1446,49 @@ class Phenium:
             return sub_adata
         else:
             self.sub_adata = sub_adata
-    # def rename_cluster(self, new_names):
-    #     old_names = self.adata.obs['leiden']
-    #     mapping_names = dict(
-    #         zip(old_names, new_names)
-    #     )
-    #     self.adata.obs['named_cluster'] = (
-    #         self.adata.obs['leiden'].map(
-    #             mapping_names
-    #         ).astype('category')
-    #     )
+
+    def rename_cluster(
+        self,
+        cluster_celltype: list | dict
+    ):
+        if isinstance(cluster_celltype, list):
+            old_names = self.adata.obs['leiden']
+            cluster_celltype = dict(zip(old_names, cluster_celltype))
+        self.adata.obs["named_cluster"] = (
+            self.adata.obs["leiden"].map(cluster_celltype).astype("category")
+        )
 
     def assign_celltype(
         self,
-        cluster_celltype_dict: dict | None,
-        adata: ad.AnnData | None = None, 
+        cluster_celltype: dict | None,
     ):
         gdf = load_plgns(self.output_dir / "cell-polygon-layers.geojson.gz")
-        if adata is None:
-            adata = self.adata.copy()
-        if cluster_celltype_dict is not None:
-            adata.obs.leiden = adata.obs.leiden.map(cluster_celltype_dict)
-        
-        oci_ci_dict = adata.obs.cell.to_dict()
-        oci_leiden_dict = adata.obs.leiden.to_dict()
+
+        if cluster_celltype is not None:
+            self.rename_cluster(cluster_celltype)
+            oci_leiden_dict = self.adata.obs.named_cluster.to_dict()       
+        else:
+            oci_leiden_dict = self.adata.obs.leiden()
+
+        oci_ci_dict = self.adata.obs.cell.to_dict()            
         cellid_celltype_dict = {
-            oci_ci_dict[oci]: oci_leiden_dict[oci] for oci in adata.obs_names
+            oci_ci_dict[oci]: oci_leiden_dict[oci] for oci in self.adata.obs_names
         }
         fltr = [idx in cellid_celltype_dict for idx in gdf.cell]
         gdf = gdf[fltr]
         gdf["celltype"] = gdf.apply(lambda row: cellid_celltype_dict[row.cell], axis=1)
-        
+
         gc.collect()
-        
+
         return gdf
 
     def deconvolute(
         self,
-        cluster_celltype_dict,
-        celltype_prot_dict,
-        img=None,
-        biomarkers=None,
-        verbose: bool = True,
+        cluster_celltype_dict: dict,
+        celltype_prot_dict: dict,
+        img: np.ndarray | None = None,
+        biomarkers: dict | None = None,
+        verbose: bool = False,
     ):
         if img is None:
             img = self.IHC.roi.view()
@@ -1369,6 +1561,10 @@ class Phenium:
                     pbar.update(1)
         if verbose:
             pbar.close()
+
+        # adjust for layer-frequency
+        new_img = apply_factor(new_img, img)
+
         gc.collect()
 
         return new_img
