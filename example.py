@@ -53,6 +53,7 @@ adata = ana.IHC.cluster(
     masks=ana.masks,
     return_copy=True,
 )
+
 io.save_anndata(adata, prefix="IHC_wXOA", output_dir=ana.output_dir)
 ax = ana.IHC.plot_segmentation(plgns=ana.masks, channels=channels)
 fig = ax.get_figure()

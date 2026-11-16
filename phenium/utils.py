@@ -344,8 +344,8 @@ def filter_by_location(
 ) -> pl.DataFrame | gpd.GeoDataFrame:
     """
     Keep entries in `table` that have coordinates in `coords`.
-    `coords` and `table` do not have the same units add `pxsize`.
-    `pxsize` is applied to `table`, not `coords`.
+    If `coords` and `table` do not have the same units define `pxsize`.
+    The `pxsize` is applied to `table`, not `coords`.
 
     Parameters
     ----------

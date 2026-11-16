@@ -3,7 +3,6 @@ import math
 import random
 
 # from copy import deepcopy
-# from dataclasses import dataclass
 from functools import partial
 from itertools import (
     # chain,
@@ -30,7 +29,6 @@ import tqdm
 import zarr
 from cellpose import models
 from matplotlib.axes import Axes
-from matplotlib.figure import Figure
 from scipy import stats
 from scipy.io import loadmat, mmread
 from scipy.sparse import csr_matrix
@@ -38,8 +36,9 @@ from shapely import transform
 from skimage.draw import polygon
 from skimage.transform import rescale
 
+from phenium.analysis import ovrlpy_analysis, proseg_doublets, vis_doublets
 from phenium.io import load_plgns, save_anndata, save_settings
-from phenium.plot import polygon_overlay
+from phenium.plot import polygon_overlay, scatter_doublets
 from phenium.segment import proseg_wrapper
 from phenium.utils import (
     apply_factor,
@@ -655,7 +654,11 @@ class IMG:
             var=var,
             obsm=obsm
         )
+        adata.var_names = adata.var.protein
+        adata.obs_names = adata.obs.cell
+
         gc.collect()
+
         return adata
 
     def cluster(
@@ -794,6 +797,7 @@ class IST:
         '_roi',
         'path',
         'pxsize',
+        'sections',
         'table',
         'z_bounds',
     ]
@@ -862,74 +866,65 @@ class IST:
                 If `return_copy` then the z-adjusted table is returned. Otherwise `table` will be replaced.
         """
         table = self.table
-        x = table['x_location'].to_numpy()[::100]
-        y = table['y_location'].to_numpy()[::100]
-        z = table['z_location'].to_numpy()[::100]
+        for coords in self.sections.values():
+            coords = scale_coords(coords, self.pxsize)
+            table_section = filter_by_location(self.table, coords)
+            fovs = table_section['fov_name']
+            x = table_section["x_location"].to_numpy()[::100]
+            y = table_section["y_location"].to_numpy()[::100]
+            z = table_section['z_location'].to_numpy()[::100]
 
+            res_x = stats.linregress(x, z)
+            res_y = stats.linregress(y, z)
 
-        res_x = stats.linregress(x, z)
-        res_y = stats.linregress(y, z)
+            for ax, res in [('x', res_x), ('y', res_y)]:
+                for fov in fovs:
+                    table_fov = table.filter(pl.col('fov_name') == fov)
+                    if len(table_fov) > 0:
+                        exog = max(table_fov[f'{ax}_location'])
 
-        for ax, res in [('x', res_x), ('y', res_y)]:
-            for fov in self.fov_names:
-                table_ = table.filter(pl.col('fov_name') == fov)
-                exog = max(table_[f'{ax}_location'])
+                        table.with_columns(
+                            pl.when(
+                                pl.col('fov_name') == fov
+                            ).then(
+                                pl.col('z_location') - (res.intercept + res.slope*exog)
+                            ).otherwise(
+                                pl.col('z_location')
+                            )
+                        )
+            z = table.filter(pl.col('fov_name').is_in(fovs)).select('z_location').to_numpy()
 
-                table.with_columns(
-                    pl.when(
-                        pl.col('fov_name') == fov
-                    ).then(
-                        pl.col('z_location') - (res.intercept + res.slope*exog)
-                    ).otherwise(
-                        pl.col('z_location')
+            z_mean = np.mean(z)
+            z_std = np.std(z)
+
+            z_min = z_mean - z_std * 3
+            z_max = z_mean + z_std * 3
+
+            table.with_columns(
+                pl.when(
+                    pl.col('fov_name').is_in(fovs)
+                ).then(
+                    pl.col('z_location').is_between(
+                        z_min, z_max
                     )
                 )
-
-        gc.collect()
-
-        z_kde = stats.gaussian_kde(table['z_location'].to_numpy())
-
-        z_min = table.select(pl.min('z_location'))
-        z_max = table.select(pl.max('z_location'))
-
-        z_space = np.linspace(z_min, z_max, 50).ravel()
-
-        z_density = z_kde(z_space)
-
-        z_density_argsort = np.argsort(z_density)[::-1]
-
-        # perhaps isolation forest is the better idea
-        # but what is a good contamination value?
-        # auto did exclude too much...
-        z_min = 0
-        z_max = 0
-        density_sum = 0
-        for z_idx in z_density_argsort:
-            dens = z_density[z_idx]
-            z_val = z_space[z_idx]
-            density_sum += dens
-            z_min = min(z_min, z_val)
-            z_max = max(z_max, z_val)
-            if z_min == 0:
-                z_min = z_val
-            if z_max == 0:
-                z_max = z_val
-            if density_sum/sum(z_density) > 0.99:
-                break
-
-        expr = (
-            pl.col('z_location').is_between(
-                z_min, z_max, closed='both'
             )
-        )
-        table = table.filter(expr)
 
-        table = table.with_columns(
-            pl.col('z_location') - z_min
-        )
+            gc.collect()
 
-        z = table.select('z_location').to_numpy()
-        self.z_bounds = (z.min(), z.max())
+            expr = (
+                pl.col('z_location').is_between(
+                    z_min, z_max, closed='both'
+                )
+            )
+            table = table.filter(expr)
+
+            table = table.with_columns(
+                pl.col('z_location') - z_min
+            )
+
+            z = table.select('z_location').to_numpy()
+            self.z_bounds = (z.min(), z.max())
 
         gc.collect()
 
@@ -1191,7 +1186,6 @@ class Phenium:
         table = pl.read_parquet(path)
         ftable = self.filter_for_section(table)
         ptable = pixelate(ftable, self.XMI.pxsize[0])
-        # print(table.head(n=5))
         masks = boundaries_to_mask(
             ptable,
             self.XMI.roi.shape[self.XMI.axes['Y']:self.XMI.axes['X']+1],
@@ -1201,11 +1195,7 @@ class Phenium:
 
         self.masks = masks
 
-        # function for vertex -> gdf
-        # then save as geojson
         gc.collect()
-        # with open(self.output_dir / f'XOA_polygons_{self.SRT_section}.json') as f:
-        #     json.dump(f, polygons)
 
     def prepare(
         self,
@@ -1273,8 +1263,8 @@ class Phenium:
         self.IHC.find_affine(
             self.XMI.roi[0, :, :],
             self.scaling_factor,
-            quick,
-            verbose,
+            quick=quick,
+            verbose=verbose,
         )
         self.IHC.adjust(verbose=verbose)
 
@@ -1324,10 +1314,33 @@ class Phenium:
             self.prior_path
         )
 
-    # def {function for running proseg, get_VSI}
-        # indentify douplets and then investigate doublets
-        # to show that proseg resolves or doesn't resolve those
-        # doublets.
+    def doublet_analysis(self):
+        vrlp = ovrlpy_analysis(self.IST.roi, "xenium")
+
+        doublets = vrlp.detect_doublets(min_signal=3, integrity_sigma=2)
+
+        doublets = pixelate(doublets, self.XMI.pxsize[0])
+
+        masks = load_plgns(Path(self.output_dir) / "cell-polygon-layers.geojson.gz")
+        masks = pixelate(masks, self.XMI.pxsize[0])
+
+        _success_rate, stuff = vis_doublets(
+            doublets,
+            masks,
+        )
+
+        _other_stuff = proseg_doublets(masks)
+
+        fig, ax = plt.subplots()
+        fig, ax = polygon_overlay(
+            masks[masks.layer == 0],
+            self.XMI.roi[0, :, :],
+            fig, ax,
+            self.XMI.pxsize[0]
+        )
+        fig, ax = scatter_doublets(stuff, fig, ax, doublets)
+        fig.savefig(self.output_dir / "plots/proseg_L0_on_DAPI_wDoublets.pdf")
+
 
     def _load_counts(self):
         counts_path = self.output_dir / 'counts.mtx.gz'
@@ -1367,18 +1380,9 @@ class Phenium:
         adata.obs_names = obs_names.to_pandas()
         adata.var_names = var_names.to_pandas()
 
-        # library_id = f'tissue_{self.SRT_section}'
-        # metadata = {
-        #     'images': {'hires': self.XMI.roi[0, :, :]},
-        #     'scalefactors': {
-        #         'tissue_hires_scalef': 1,
-        #         'spot_diameter_fullres': 0.25,
-        #     },
-        # }
-        # adata.uns['spatial'] = {library_id: metadata}
-
-        self.adata = adata
         gc.collect()
+
+        return adata
 
     def cluster(
         self,
@@ -1386,9 +1390,7 @@ class Phenium:
         save=True,
         return_copy=False,
     ):
-        self._anndata()
-
-        adata = self.adata
+        adata = self._anndata()
 
         adata = run_leiden(adata, resolution=resolution)
 
@@ -1399,22 +1401,6 @@ class Phenium:
 
         if save:
             save_anndata(adata, prefix=f'IST_{self.prior_type}', output_dir=self.output_dir)
-
-        # predictions = celltypist.annotate(
-        #     self.adata,
-        #     model=model,
-        #     majority_voting=True,
-        #     use_GPU=gpu
-        # )
-
-        # ctadata = predictions.to_adata()
-
-        # sc.pl.umap(
-        #     ctadata,
-        #     color='predicted_labels',
-        #     legend_loc='on data',
-        #     show=False,
-        # ).figure.savefig(self.output_dir / 'knn_umap_leiden_ct.png')
 
         gc.collect()
 
