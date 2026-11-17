@@ -21,7 +21,7 @@
     - compare signal reduction and integrity-change
         - abs signal difference
         - avg integrity before & after (?)
-- [ ] intersection with geopandas
+- [X] intersection with geopandas
     - for each cell(layer) find coverage with all others cells
         - obv excluding itself
 
@@ -82,9 +82,9 @@
 
 # miscellaneous
 - [ ] pixel size must be calculated considering Physical Unit (296?)
-- [ ] z-slides based on transcript-distribution (phenium) and cell size (user) + tissue thickness (user)
+- [X] z-slides based on transcript-distribution (phenium) and cell size (user) + tissue thickness (user)
 
 # Präsi for Fr. 13.11.2026
 - [ ] find other Deconvolution methods
 - [ ] investigate QQ, Earth mover's distance & Minimum Spanning Tree
-- [ ] mark doublets!
+- [X] mark doublets!

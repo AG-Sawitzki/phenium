@@ -37,7 +37,7 @@ def proseg_wrapper(
                         value = 1
                 elif arg == 'burnin-voxel-size':
                     if not value:
-                        value = 1*8
+                        value = layers
                 else:
                     value = value
                 general.append(
@@ -78,7 +78,7 @@ def proseg_wrapper(
     if prior_path != '':
         arguments += ['--cellpose-masks', str(prior_path)]
 
-    arguments.append(f'--{machine}')
+    arguments.insert(0, f'--{machine}')
     arguments.append(str(transcripts_path))
 
     arguments.insert(0, 'proseg')

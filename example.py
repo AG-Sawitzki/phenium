@@ -1,7 +1,8 @@
 import os
 from pathlib import Path
 
-os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = "16"
+os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = "20"
+os.environ["RUST_BACKTRACE"] = "1"
 
 from rich.traceback import install
 

@@ -1152,7 +1152,8 @@ class Phenium:
 
         self.decon_dir = Path(
             self.output_dir / f'SRT{self.SRT_section}_IHC{self.IHC_section}/'
-        ).mkdir(parents=True, exist_ok=True)
+        )
+        self.decon_dir.mkdir(parents=True, exist_ok=True)
 
         if verbose:
             print('Filtering IST for section.')
@@ -1223,7 +1224,7 @@ class Phenium:
             self.PS_params,
             self.machine,
             self.output_dir / f"transcripts_{self.SRT_section}.parquet",
-            self.decon_dir,
+            self.output_dir,
             self.layers,
             self.prior_path,
         )
