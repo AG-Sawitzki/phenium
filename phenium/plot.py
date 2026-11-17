@@ -241,13 +241,13 @@ def transcripts_vs_z(
     if color_fovs:
         fov_names = list(set(table['fov_names']))
         for fov in fov_names:
-            table_ = table.filter(pl.col('fov_name')==fov)
-            z_arr = table_.select(pl.col('z_location')).to_numpy()[::100].ravel()
+            table_ = table.filter(pl.col.fov_name == fov)
+            z_arr = table_.select(pl.col.z_location).to_numpy()[::100].ravel()
             axis_arr = table_.select(pl.col(f'{axis}_location')).to_numpy()[::100].ravel()
             ax.scatter(axis_arr, z_arr, s=0.5)
     else:
         axis_arr = table.select(pl.col(f"{axis}_location")).to_numpy()[::100].ravel()
-        z_arr = table.select(pl.col("z_location")).to_numpy()[::100].ravel()
+        z_arr = table.select(pl.col.z_location).to_numpy()[::100].ravel()
         ax.scatter(axis_arr, z_arr, c="#009AA9", s=0.5)
     
     if lingres:
@@ -269,7 +269,7 @@ def z_distribution(
     ax: Axes | None = None
 ) -> tuple[Figure, Axes]:
     """
-    Graph-plot of the z-distribution with a kernel-density-estimation.
+    Graph-plot of the z-distribution using a gaussian kernel-density-estimation.
 
     Parameters
     ----------
@@ -288,12 +288,12 @@ def z_distribution(
             Axes with distribution plot.
     """
     if ax is None:
-        fig, ax = plt.sublots()
+        _fig, ax = plt.sublots()
     else:
-        fig = ax.get_figure()
+        _fig = ax.get_figure()
 
     z_kde = stats.gaussian_kde(
-        table.select(pl.col('z_location').to_numpy().ravel())
+        table.select(pl.col.z_location).to_numpy().ravel()
     )
 
     z_min = table.select(pl.min('z_location'))
@@ -305,25 +305,15 @@ def z_distribution(
 
     ax.plot(z_space, z_density, c="#009AA9")
     ax.set_xlabel('z_location in µm')
-    ax.set_ylabel('fraction of transcripts')
+    ax.set_ylabel('estimated density of transcripts')
 
     if cutoff:
-        z_density_argsort = np.argsort(z_density)[::-1]
-        z_min = 0
-        z_max = 0
-        density_sum = 0
-        for z_idx in z_density_argsort:
-            dens = z_density[z_idx]
-            z_val = z_space[z_idx]
-            density_sum += dens
-            if density_sum / sum(z_density) > 0.95:
-                break
-            z_min = min(z_min, z_val)
-            z_max = max(z_max, z_val)
-            if z_min == 0:
-                z_min = z_val
-            if z_max == 0:
-                z_max = z_val
+        z = table.select(pl.col.z_location)
+        z_mean = z.mean()
+        z_std = z.std()
+
+        z_min = (z_mean - z_std * 3).to_numpy().max()
+        z_max = (z_mean + z_std * 3).to_numpy().max()
 
         ax.vlines([z_min, z_max], z_density.min(), z_density.max(), colors="#EA5451")
         ax.set_title(f'Distribution of along Z-axis. Cutoff at {z_min} and {z_max}.')

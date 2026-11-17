@@ -18,6 +18,7 @@ from cellpose.utils import outlines_list
 from shapely import Polygon
 from skimage.draw import polygon
 from skimage.transform import rescale
+from sklearn.linear_model import LinearRegression
 
 
 def depth(
@@ -387,7 +388,7 @@ def filter_by_location(
                 print(f'Setting col to {axis}')
                 column = axis
 
-            expr = ((pl.col(column)).is_between(
+            expr = (pl.col(column).is_between(
                 var_min, var_max, closed='both'
             ))
             table = table.filter(expr)
@@ -395,7 +396,7 @@ def filter_by_location(
             # print(table.shape)
         if z_bounds != None and 'z_location' in table.columns:
             z_low, z_high = z_bounds
-            expr = ((pl.col('z_location')).is_between(
+            expr = (pl.col.z_location.is_between(
                 z_low, z_high, closed='both'
             ))
             table = table.filter(expr)
@@ -424,6 +425,40 @@ def filter_by_location(
         raise NotImplementedError(
             f'Not Implemented to deal with {type(table)}.'
         )
+
+    return table
+
+
+def adjust_z(table):
+    xy = table.select(pl.col.x_location, pl.col.y_location).to_numpy()[::100]
+    z = table.select(pl.col.z_location).to_numpy()[::100]
+
+    mdl = LinearRegression().fit(xy, z)
+    slp_x, slp_y = mdl.coef_.squeeze()
+    intrcpt = mdl.intercept_.squeeze()
+
+    table = table.with_columns(
+        (pl.col.z_location
+        - (
+            pl.col.x_location.max() * slp_x
+            + pl.col.y_location.max() * slp_y
+            + intrcpt
+        ))
+        .over('fov_name')
+    )
+
+    z = table.select(pl.col.z_location)
+    z_mean = z.mean()
+    z_std = z.std()
+
+    z_min = (z_mean - z_std * 3).to_numpy().max()
+    z_max = (z_mean + z_std * 3).to_numpy().max()
+
+    table = table.filter(
+        pl.col.z_location.is_between(z_min, z_max, closed='both')
+    )
+
+    table = table.with_columns(pl.col.z_location - z_min)
 
     return table
 

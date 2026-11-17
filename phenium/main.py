@@ -29,7 +29,6 @@ import tqdm
 import zarr
 from cellpose import models
 from matplotlib.axes import Axes
-from scipy import stats
 from scipy.io import loadmat, mmread
 from scipy.sparse import csr_matrix
 from shapely import transform
@@ -41,6 +40,7 @@ from phenium.io import load_plgns, save_anndata, save_settings
 from phenium.plot import polygon_overlay, scatter_doublets
 from phenium.segment import proseg_wrapper
 from phenium.utils import (
+    adjust_z,
     apply_factor,
     bboxes_to_sections,
     boundaries_to_mask,
@@ -311,7 +311,7 @@ class IMG:
                         pool.imap(func, moving),
                         total=len(iterations),
                     ):
-                        res.append(r)
+                        res.append(r)  # noqa: PERF402
             else:
                 with Pool(processes=2) as pool:
                     res = pool.imap(func, moving)
@@ -621,7 +621,7 @@ class IMG:
                 mask = masks[y_low:y_high, x_low:x_high]
                 mask = np.uint32(mask == cid)
                 gdf = process_roi(mask, cell_id_start=cid)
-                gdf.geometry = transform(gdf.geometry, lambda x: x + [x_low, y_low])
+                gdf.geometry = transform(gdf.geometry, lambda x: x + [x_low, y_low])  # noqa: B023
                 data.append(gdf)
                 if verbose:
                     pbar.update(1)
@@ -801,9 +801,10 @@ class IST:
         'table',
         'z_bounds',
     ]
-    def __init__(self, path, pxsize):
+    def __init__(self, path, pxsize, sections):
         self.path = Path(path)
         self.pxsize = float(pxsize)
+        self.sections = sections
         suffix = self.path.suffix
         if suffix:
             if suffix == '.parquet':
@@ -819,19 +820,10 @@ class IST:
                 self.path / 'transcripts.parquet'
             )
 
-        self.adjust_z()
-
-    @property
-    def fov_names(self):
-        """
-        List of names of the FOVs.
-        """
-        return list(set(self.table['fov_name']))
-
     @property
     def roi(self):
         """
-        Sub-table with all transcripts in chosen bounds. 
+        Sub-table with all transcripts in chosen bounds, and z-adjusted.
         """
         return self._roi
 
@@ -841,97 +833,12 @@ class IST:
         table = filter_by_location(
             self.table,
             new_coords,
-            z_bounds=self.z_bounds,
         )
+        table = adjust_z(table)
         self._roi = relative(
             table,
             new_coords
         )
-
-    def adjust_z(
-        self,
-        return_copy: bool = False
-    )-> None | pl.DataFrame:
-        """
-        Adjust the z-location of the `table`-attribute.
-
-        Parameters
-        ----------
-            return_copy: bool
-                If `True` returns the table and does not replace `table`.
-        
-        Returns
-        -------
-            out: None or polars.DataFrame
-                If `return_copy` then the z-adjusted table is returned. Otherwise `table` will be replaced.
-        """
-        table = self.table
-        for coords in self.sections.values():
-            coords = scale_coords(coords, self.pxsize)
-            table_section = filter_by_location(self.table, coords)
-            fovs = table_section['fov_name']
-            x = table_section["x_location"].to_numpy()[::100]
-            y = table_section["y_location"].to_numpy()[::100]
-            z = table_section['z_location'].to_numpy()[::100]
-
-            res_x = stats.linregress(x, z)
-            res_y = stats.linregress(y, z)
-
-            for ax, res in [('x', res_x), ('y', res_y)]:
-                for fov in fovs:
-                    table_fov = table.filter(pl.col('fov_name') == fov)
-                    if len(table_fov) > 0:
-                        exog = max(table_fov[f'{ax}_location'])
-
-                        table.with_columns(
-                            pl.when(
-                                pl.col('fov_name') == fov
-                            ).then(
-                                pl.col('z_location') - (res.intercept + res.slope*exog)
-                            ).otherwise(
-                                pl.col('z_location')
-                            )
-                        )
-            z = table.filter(pl.col('fov_name').is_in(fovs)).select('z_location').to_numpy()
-
-            z_mean = np.mean(z)
-            z_std = np.std(z)
-
-            z_min = z_mean - z_std * 3
-            z_max = z_mean + z_std * 3
-
-            table.with_columns(
-                pl.when(
-                    pl.col('fov_name').is_in(fovs)
-                ).then(
-                    pl.col('z_location').is_between(
-                        z_min, z_max
-                    )
-                )
-            )
-
-            gc.collect()
-
-            expr = (
-                pl.col('z_location').is_between(
-                    z_min, z_max, closed='both'
-                )
-            )
-            table = table.filter(expr)
-
-            table = table.with_columns(
-                pl.col('z_location') - z_min
-            )
-
-            z = table.select('z_location').to_numpy()
-            self.z_bounds = (z.min(), z.max())
-
-        gc.collect()
-
-        if return_copy:
-            return table
-        else:
-            self.table = table
 
 
 class Phenium:
@@ -983,6 +890,7 @@ class Phenium:
         "channels",
         "config",
         "counts",
+        "decon_dir",
         "exclude",
         "machine",
         "masks",
@@ -1009,7 +917,7 @@ class Phenium:
         self.IHC_path = Path(IHC_path)
         self.output_dir = Path(output_dir)
 
-        Path(self.output_dir / 'plots/').mkdir(parents=False, exist_ok=True)
+        Path(self.output_dir / 'plots/').mkdir(parents=True, exist_ok=True)
 
         with open(config_path) as f:
             self.config = tomlkit.load(f)
@@ -1039,7 +947,7 @@ class Phenium:
             self.IHC.pxsize[0] / self.XMI.pxsize[0]
         )
 
-        self.IST = IST(self.SRT_dir, self.XMI.pxsize[0])
+        self.IST = IST(self.SRT_dir, self.XMI.pxsize[0], self.XMI.sections)
 
         save_settings(self, self.output_dir / 'settings.txt')
 
@@ -1073,8 +981,10 @@ class Phenium:
         """
         Layers defined in the transcriptomics by `cell_size`.
         """
-        z_bounds = self.IST.z_bounds
-        diff = z_bounds[1]-z_bounds[0]
+        diff = (
+            self.IST.roi['z_location'].max()
+            - self.IST.roi['z_location'].min()
+        )
         layers = int(diff/self.cell_size * 3)
         if layers > 3:
             return layers
@@ -1240,6 +1150,10 @@ class Phenium:
         self.XMI.roi = SRT_section
         self.IHC.roi = IHC_section
 
+        self.decon_dir = Path(
+            self.output_dir / f'SRT{self.SRT_section}_IHC{self.IHC_section}/'
+        ).mkdir(parents=True, exist_ok=True)
+
         if verbose:
             print('Filtering IST for section.')
         self.IST.roi = self.XMI.sections[SRT_section]
@@ -1308,10 +1222,10 @@ class Phenium:
         proseg_wrapper(
             self.PS_params,
             self.machine,
-            self.output_dir / f'transcripts_{self.SRT_section}.parquet',
-            self.output_dir,
+            self.output_dir / f"transcripts_{self.SRT_section}.parquet",
+            self.decon_dir,
             self.layers,
-            self.prior_path
+            self.prior_path,
         )
 
     def doublet_analysis(self):
@@ -1321,7 +1235,7 @@ class Phenium:
 
         doublets = pixelate(doublets, self.XMI.pxsize[0])
 
-        masks = load_plgns(Path(self.output_dir) / "cell-polygon-layers.geojson.gz")
+        masks = load_plgns(Path(self.decon_dir) / "cell-polygon-layers.geojson.gz")
         masks = pixelate(masks, self.XMI.pxsize[0])
 
         _success_rate, stuff = vis_doublets(
@@ -1339,11 +1253,11 @@ class Phenium:
             self.XMI.pxsize[0]
         )
         fig, ax = scatter_doublets(stuff, fig, ax, doublets)
-        fig.savefig(self.output_dir / "plots/proseg_L0_on_DAPI_wDoublets.pdf")
+        fig.savefig(self.decon_dir / "plots/proseg_L0_on_DAPI_wDoublets.pdf")
 
 
     def _load_counts(self):
-        counts_path = self.output_dir / 'counts.mtx.gz'
+        counts_path = self.decon_dir / 'counts.mtx.gz'
         counts = mmread(counts_path)
         self.counts = counts.tocsr()
         gc.collect()
@@ -1354,8 +1268,8 @@ class Phenium:
         Hence, construction by hand.
         """
         self._load_counts()
-        genes = pl.read_parquet(self.output_dir / 'gene-metadata.parquet')
-        cells = pl.read_parquet(self.output_dir / 'cell-metadata.parquet')
+        genes = pl.read_parquet(self.decon_dir / 'gene-metadata.parquet')
+        cells = pl.read_parquet(self.decon_dir / 'cell-metadata.parquet')
 
         spatial = cells[
             ['centroid_x', 'centroid_y'] # , 'centroid_z']
@@ -1382,6 +1296,10 @@ class Phenium:
 
         gc.collect()
 
+        adata.write_h5ad(
+            self.decon_dir / 'adata.h5ad'
+        )
+
         return adata
 
     def cluster(
@@ -1400,7 +1318,7 @@ class Phenium:
         )
 
         if save:
-            save_anndata(adata, prefix=f'IST_{self.prior_type}', output_dir=self.output_dir)
+            save_anndata(adata, prefix=f'IST_{self.prior_type}', output_dir=self.decon_dir)
 
         gc.collect()
 
@@ -1424,7 +1342,7 @@ class Phenium:
             groupby='leiden'
         )
         if save:
-            save_anndata(sub_adata, prefix=f'IST_c{cluster}', output_dir=self.output_dir)
+            save_anndata(sub_adata, prefix=f'IST_c{cluster}', output_dir=self.decon_dir)
 
         gc.collect()
 
@@ -1448,7 +1366,7 @@ class Phenium:
         self,
         cluster_celltype: dict | None,
     ):
-        gdf = load_plgns(self.output_dir / "cell-polygon-layers.geojson.gz")
+        gdf = load_plgns(self.decon_dir / "cell-polygon-layers.geojson.gz")
 
         if cluster_celltype is not None:
             self.rename_cluster(cluster_celltype)

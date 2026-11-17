@@ -16,7 +16,7 @@ from phenium.utils import pixelate
 
 xenium_dir = "/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260827__133139__20260827_ITCAIM_lung-spleen_run4/output-XETG00410__0065619__non_infected_lung__20260827__133207"
 pheno_img = "/data/cephfs-2/unmirrored/projects/sawitzki-phenium/data/20260902_ITCAIM_Phenium_Slide8/Scan1/20260902_ITCAIM_Phenium_Slide8_Scan1.er.qptiff"
-output_dir = "/data/cephfs-1/scratch/projects/sawitzki-phenium/Phenium_XOA-prior"
+output_dir = "/data/cephfs-1/scratch/projects/sawitzki-phenium/Phenium-XOA-prior"
 config_path = "/data/cephfs-2/unmirrored/projects/sawitzki-phenium/phenium/config.toml"
 prior_type = "XOA"
 channels = ("DAPI", "CD44", "Vimentin")
@@ -32,6 +32,7 @@ exclude = [
     "CD62L",
     "TCRab",
 ]
+cell_size=8 # default value
 seed = 37
 
 ana = Phenium(
@@ -42,6 +43,7 @@ ana = Phenium(
     prior_type=prior_type,
     channels=channels,
     exclude=exclude,
+    cell_size=cell_size,
     seed=seed
 )
 

@@ -224,3 +224,6 @@ __marimo__/
 # weird stuff...
 membership_debug.txt
 rebalanced_membership_debug.txt
+
+# other stuff
+ct.jsonc
