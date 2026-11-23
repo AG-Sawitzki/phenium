@@ -1,5 +1,7 @@
 import pickle
+import shlex
 from pathlib import Path, PurePath
+from time import sleep
 
 import anndata as ad
 import geopandas as gpd
@@ -122,3 +124,75 @@ def save_anndata(
         print("spatial scatter saved")
     except KeyError:
         print("no spatial data or leiden")
+
+
+def submit_sbatch(
+    job_dir: str | PurePath,
+    name: str,
+    time: int,
+    mem: int,
+    cpu: int,
+    log_path: str | PurePath,
+    cmd: str,
+    gpu: str | None = None,
+    mail: str | None = None,
+) -> str:
+    """
+    Writes a job-file for sbatch and return the command to submit it.
+
+    Parameters
+    ----------
+        job_dir : Path
+            Path to a directory
+            Where the sbatch files will be saved.
+        name : str
+            Name of the bash-file to create.
+        time : int
+            Hours to reserve the node for.
+        mem : int
+            How much RAM in GB to request.
+        cpu :  int
+            How many cpu-cores to request.
+        log_path : Path
+            Path to directory
+            Where the logs will be saved.
+        cmd : str
+            The command to run on the node.
+        gpu : str, optional
+            Wether to run on a gpu node or not.
+            Default is `None`.
+        mail : str, optional
+            The mail-address to send sbatch updates to.
+            Default is `None`.
+
+    Returns
+    -------
+        out : str
+            String with which the job can be submitted
+    """
+    with open(f'{job_dir}/{name}.sh', 'w+') as fh:
+        fh.writelines('#!/bin/bash\n')
+        fh.writelines('#\n')
+        fh.writelines(f'#SBATCH --job-name={name}\n')
+        fh.writelines('#SBATCH --wait\n')
+        if gpu is not None:
+            fh.writelines(f'#SBATCH --gres={gpu}\n')
+        fh.writelines(f'#SBATCH --time=0-{time}\n')
+        fh.writelines(f'#SBATCH --mem={mem}G\n')
+        fh.writelines(f'#SBATCH --cpus-per-task={cpu}\n')
+        fh.writelines(f'#SBATCH --output={log_path}/{name}_%N_%j.out\n')
+        fh.writelines(f'#SBATCH --error={log_path}/{name}_%N_%j.err\n')
+        if mail is not None:
+            fh.writelines(f'#SBATCH --mail-user={mail}\n')
+            fh.writelines(
+                '#SBATCH --mail-type=BEGIN,END,FAIL,'
+                'TIME_LIMIT_90,TIME_LIMIT_80,TIME_LIMIT_50\n')
+        fh.writelines('#\n')
+        fh.writelines('. ~/.bashrc\n')
+        fh.writelines('export PIXI_CACHE_DIR=~/scratch/.cache/pixi')
+        fh.writelines('\n#\n')
+        fh.writelines(f'{cmd}\n')
+
+    sleep(3)
+
+    return f'sbatch {fh.name}'

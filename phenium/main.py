@@ -42,10 +42,12 @@ from phenium.segment import proseg_wrapper
 from phenium.utils import (
     adjust_z,
     apply_factor,
+    bbox_centre,
     bboxes_to_sections,
     boundaries_to_mask,
     cell_loc,
     chunk_size,
+    closest_point,
     filter_by_location,
     find_rois,
     get_biomarkers,
@@ -140,6 +142,18 @@ class IMG:
             if pos is not None:
                 axs[ax] = pos
         return axs
+
+    @property
+    def midpoints(self):
+        return dict(
+            zip(
+                self.sections,
+                map(
+                    bbox_centre,
+                    self.sections.values()
+                )
+            )
+        )
 
     @property
     def pxsize(self):
@@ -933,13 +947,13 @@ class Phenium:
             self.SRT_dir / 'morphology_focus/ch0000_dapi.ome.tif'
         )
         tifffile.imwrite(
-            self.output_dir / 'SRT_overview.png',
+            self.output_dir / 'SRT_overview.tif',
             self.XMI.overview
         )
 
         self.IHC = IMG(self.IHC_path, exclude=exclude)
         tifffile.imwrite(
-            self.output_dir / 'IHC_overview.png',
+            self.output_dir / 'IHC_overview.tif',
             self.IHC.overview
         )
 
@@ -960,7 +974,6 @@ class Phenium:
             f'Initialized. \n'
             f'Review marked images in {self.output_dir}.'
         )
-
 
     @property
     def prior_path(self):
@@ -1173,15 +1186,28 @@ class Phenium:
         if verbose:
             print(f'Saved IST.roi at {IST_path}')
 
-        if verbose:
-            print('Adjusting IHC to be of same shape as SRT imgs')
-        self.IHC.find_affine(
-            self.XMI.roi[0, :, :],
-            self.scaling_factor,
-            quick=quick,
-            verbose=verbose,
-        )
-        self.IHC.adjust(verbose=verbose)
+        if (
+            skip_affine
+            & (
+                self.prior_type == 'CP'
+                & self.CP_params['style'] != 'pheno'
+            )
+        ):
+            print(
+                'Skipping the registration results in unusable masks.'
+                'Continuing with registration.'    
+            )
+            skip_affine = False
+        if not skip_affine:
+            if verbose:
+                print('Adjusting IHC to be of same shape as SRT imgs')
+            self.IHC.find_affine(
+                self.XMI.roi[0, :, :],
+                self.scaling_factor,
+                quick=quick,
+                verbose=verbose,
+            )
+            self.IHC.adjust(verbose=verbose)
 
         if self.prior_type == 'CP':
             style = self.CP_params['style']

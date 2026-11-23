@@ -1,6 +1,7 @@
 import math
 import os
 import xml.etree.ElementTree as ET
+from functools import partial
 from multiprocessing import cpu_count
 from pathlib import Path, PurePath
 from typing import overload
@@ -15,6 +16,7 @@ import polars.selectors as cs
 import scanpy as sc
 import tifffile
 from cellpose.utils import outlines_list
+from scipy.spatial.distance import minkowski
 from shapely import Polygon
 from skimage.draw import polygon
 from skimage.transform import rescale
@@ -139,6 +141,25 @@ def find_rois(
 
     return bboxes_sorted
 
+
+def bbox_center(section):
+    minx, maxx = section['x']
+    miny, maxy = section['y']
+
+    Mx = (minx + maxx) / 2
+    My = (miny + maxy) / 2
+
+    return [Mx, My]
+
+
+def closest_point(m1, M):
+    func = partial(minkowski, v=m1, p=2)
+
+    distance = np.apply_along_axis(
+        func, 1, M
+    )
+
+    return np.argsort(distance)[0]
 
 @overload
 def bboxes_to_sections(

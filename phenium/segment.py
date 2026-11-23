@@ -39,7 +39,7 @@ def proseg_wrapper(
                     if not value:
                         value = layers
                 else:
-                    value = value
+                    pass
                 general.append(
                     f'--{arg} {value}'
                 )
