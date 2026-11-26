@@ -57,7 +57,10 @@ def load_plgns(path):
 
 
 def save_anndata(
-    adata: ad.AnnData, prefix: str, output_dir: PurePath, pval_max: float = 0.01
+    adata: ad.AnnData,
+    prefix: str,
+    output_dir: PurePath,
+    pval_max: float = 0.01
 ):
 
     ad_dir = output_dir / f"{prefix}_anndata"

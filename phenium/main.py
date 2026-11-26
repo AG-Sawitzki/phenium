@@ -47,7 +47,6 @@ from phenium.utils import (
     boundaries_to_mask,
     cell_loc,
     chunk_size,
-    closest_point,
     filter_by_location,
     find_rois,
     get_biomarkers,
@@ -936,12 +935,12 @@ class Phenium:
         with open(config_path) as f:
             self.config = tomlkit.load(f)
 
-        self.machine = machine
-        self.prior_type = prior_type
-        self.channels = channels
-        self.exclude = exclude
-        self.cell_size = cell_size
-        self.seed = seed
+        self.machine = str(machine)
+        self.prior_type = str(prior_type)
+        self.channels = tuple(channels)
+        self.exclude = list(exclude)
+        self.cell_size = int(cell_size)
+        self.seed = int(seed)
 
         self.XMI = IMG(
             self.SRT_dir / 'morphology_focus/ch0000_dapi.ome.tif'
@@ -1173,10 +1172,10 @@ class Phenium:
         self.IST.roi = self.XMI.sections[SRT_section]
 
         IST_path = Path(
-            self.output_dir / f'transcripts_{SRT_section}.parquet'
+            self.decon_dir / f'transcripts_{SRT_section}.parquet'
         )
         self.IST.roi.write_parquet(
-            IST_path,
+            file=IST_path,
             compression="snappy",
             use_pyarrow=True,
             pyarrow_options={
@@ -1188,10 +1187,8 @@ class Phenium:
 
         if (
             skip_affine
-            & (
-                self.prior_type == 'CP'
-                & self.CP_params['style'] != 'pheno'
-            )
+            & (self.prior_type == 'CP')
+            & (self.CP_params['style'] == 'pheno')
         ):
             print(
                 'Skipping the registration results in unusable masks.'
@@ -1213,6 +1210,7 @@ class Phenium:
             style = self.CP_params['style']
             channels = ['DAPI']
             if style == 'focus':
+                print('Not recommended to run Cellpose on Xenium Morphology Images. Use XOA instead.')
                 masks = self.XMI.segment(channels=channels, return_copy=True)
             elif style == 'pheno':
                 masks = self.IHC.segment(channels=channels, return_copy=True)
@@ -1249,8 +1247,8 @@ class Phenium:
         proseg_wrapper(
             self.PS_params,
             self.machine,
-            self.output_dir / f"transcripts_{self.SRT_section}.parquet",
-            self.output_dir,
+            self.decon_dir / f"transcripts_{self.SRT_section}.parquet",
+            self.decon_dir,
             self.layers,
             self.prior_path,
         )
@@ -1331,13 +1329,23 @@ class Phenium:
 
     def cluster(
         self,
+        adata=None,
         resolution=0.25,
+        gpu=False,
         save=True,
         return_copy=False,
     ):
-        adata = self._anndata()
+        if adata == None:
+            adata = self._anndata()
 
-        adata = run_leiden(adata, resolution=resolution)
+        if (not gpu) and (adata.__sizeof__() > 1):
+            print('AnnData object is very large. Setting `gpu` to `True`.')
+            gpu = True
+
+        try:
+            adata = run_leiden(adata, resolution=resolution, gpu=gpu)
+        except:
+            adata = run_leiden(adata, resolution=resolution, gpu=~gpu)
 
         sc.tl.rank_genes_groups(
             adata,

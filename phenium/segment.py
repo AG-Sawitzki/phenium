@@ -28,7 +28,7 @@ def proseg_wrapper(
             for arg, value in dic.items():
                 if arg == 'nthreads':
                     if not value:
-                        value = min(20, mp.cpu_count()-1)
+                        value = min(30, mp.cpu_count()-1)
                 elif arg == 'voxel-layers':
                     if not value:
                         value = layers
@@ -80,6 +80,7 @@ def proseg_wrapper(
 
     arguments.insert(0, f'--{machine}')
     arguments.append(str(transcripts_path))
+    arguments.append(str(machine))
 
     arguments.insert(0, 'proseg')
 

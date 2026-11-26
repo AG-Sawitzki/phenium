@@ -6,6 +6,7 @@ from multiprocessing import cpu_count
 from pathlib import Path, PurePath
 from typing import overload
 
+import anndata as ad
 import ants
 import cv2
 import geopandas as gpd
@@ -13,6 +14,7 @@ import numpy as np
 import ovrlpy
 import polars as pl
 import polars.selectors as cs
+import rapid_singlecell as rsc
 import scanpy as sc
 import tifffile
 from cellpose.utils import outlines_list
@@ -142,7 +144,7 @@ def find_rois(
     return bboxes_sorted
 
 
-def bbox_center(section):
+def bbox_centre(section):
     minx, maxx = section['x']
     miny, maxy = section['y']
 
@@ -479,7 +481,7 @@ def adjust_z(table):
         pl.col.z_location.is_between(z_min, z_max, closed='both')
     )
 
-    table = table.with_columns(pl.col.z_location - z_min)
+    table = table.with_columns((pl.col.z_location - z_min).cast(pl.Float32))
 
     return table
 
@@ -836,11 +838,12 @@ def get_biomarkers(
     return biomarkers
 
 def run_leiden(
-    adata,
+    adata: ad.AnnData,
     resolution: float = 0.25,
-    percent_top=(25, 75, 150),
-    n_comps=100,
-    n_pcs=40
+    percent_top: tuple[int, ...] = (25, 75, 150),
+    n_comps: int = 100,
+    n_pcs: int = 40,
+    gpu: bool = False,
 ):
     """
     Prepare for and then run Leiden on an anndata object.
@@ -873,16 +876,16 @@ def run_leiden(
 
     sc.tl.pca(adata, n_comps=n_comps)
 
-    # if gpu:
-    #     rsc.get.anndata_to_GPU(adata, convert_all=True)
-    #     rsc.pp.neighbors(adata, n_neighbors=15, n_pcs=40)
-    #     rsc.tl.umap(adata)
-    #     rsc.tl.leiden(adata, resolution=resolution)
-    #     rsc.get.anndata_to_CPU(adata, convert_all=True)
-    # else:
-    sc.pp.neighbors(adata, n_neighbors=15, n_pcs=n_pcs)
-    sc.tl.umap(adata)
-    sc.tl.leiden(adata, resolution=resolution, flavor='igraph', n_iterations=2)
+    if gpu:
+        rsc.get.anndata_to_GPU(adata, convert_all=True)
+        rsc.pp.neighbors(adata, n_neighbors=15, n_pcs=40)
+        rsc.tl.umap(adata)
+        rsc.tl.leiden(adata, resolution=resolution)
+        rsc.get.anndata_to_CPU(adata, convert_all=True)
+    else:
+        sc.pp.neighbors(adata, n_neighbors=15, n_pcs=n_pcs)
+        sc.tl.umap(adata)
+        sc.tl.leiden(adata, resolution=resolution, flavor='igraph', n_iterations=2)
 
     return adata
 
