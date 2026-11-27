@@ -868,8 +868,8 @@ def run_leiden(
         log1p=True
     )
 
-    sc.pp.filter_cells(adata, min_genes=3)
-    sc.pp.filter_genes(adata, min_cells=3)
+    sc.pp.filter_cells(adata, min_genes=10)
+    sc.pp.filter_genes(adata, min_cells=10)
 
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)

@@ -94,6 +94,6 @@ if __name__ == '__main__':
     for section in ana.XMI.sections:
         ana.prepare(section, 0, skip_affine=True, verbose=True)
         ana.run_proseg()
-        ana._anndata()
+        ana._anndata(make_unique=True)
         gc.collect()
         _ = empty_cache()

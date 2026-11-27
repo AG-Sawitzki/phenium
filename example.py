@@ -8,6 +8,7 @@ from rich.traceback import install
 
 install(show_locals=True)
 
+import anndata as ad
 import matplotlib.pyplot as plt
 import numpy as np
 import tifffile
@@ -50,7 +51,12 @@ ana = Phenium(
 
 ana.prepare(4, 12, quick=True, verbose=True)
 
+adata = ad.read_h5ad(
+    "/data/cephfs-1/scratch/projects/sawitzki-phenium/Phenium-HPC-Test/nearly_all_tissues_no_prior_no_processing_adata.h5ad"
+)
+
 adata = ana.IHC.cluster(
+    adata=adata,
     resolution=0.175,
     exclude=["DAPI", "CD44", "Vimentin"],
     masks=ana.masks,

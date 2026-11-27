@@ -1287,7 +1287,7 @@ class Phenium:
         self.counts = counts.tocsr()
         gc.collect()
 
-    def _anndata(self):
+    def _anndata(self, make_unique=False):
         """
         Only here because loading the spatialdata obj didn't work.
         Hence, construction by hand.
@@ -1316,7 +1316,11 @@ class Phenium:
             obsm=obsm,
         )
 
-        adata.obs_names = obs_names.to_pandas()
+        if make_unique:
+            adata.obs_names = obs_names.to_pandas() + self.output_dir.stem
+        else:
+            adata.obs_names = obs_names.to_pandas()
+
         adata.var_names = var_names.to_pandas()
 
         gc.collect()

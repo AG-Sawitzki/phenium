@@ -1,33 +1,38 @@
 [workspace]
 authors = ["Philomina"]
 channels = [
-    "rapidsai", "nvidia", "conda-forge", "bioconda", "pytorch", "nodefaults", 
+    "https://prefix.dev/rapidsai",
+    "https://prefix.dev/nvidia",
+    "https://prefix.dev/conda-forge",
+    "https://prefix.dev/bioconda",
+    "https://prefix.dev/pytorch",
+    "nodefaults", 
 ]
 channel-priority = "flexible"
 name = "phenium"
 platforms = [
     { name = "lida", platform = "linux-64", cuda = "12" },
 ]
-version = "2026.10.2a1"
+version = "2026.11.1a1"
 
 # [package.build]
 # backend = { name = "pixi-build-python", version = "0.*" }
 
 [constraints]
 numpy = ">=1.20.0"
-pandas = ">2.0,<3.0"
+pandas = ">2.0,<3.dev0"
 
 [dependencies]
-python = ">=3.12"
+python = ">=3.13"
 ipython = "*"
 # phenium = { path = "./phenium/" }
 
 [target.lida.dependencies]
 antspyx = ">0.6"
-celltypist = ">1.7.0"
-cuda-version = "==12.9"
+cuda-version = ">=12.9"
 cudnn = "*"
-cupy = ">13.6.0"
+# cugraph = { version = "*" }
+# cupy = ">13.6.0"
 cutensor = "*"
 cusparselt = "*"
 fastremap = "*"
@@ -35,6 +40,7 @@ fill-voids = "*"
 geojson = "*"
 geopandas = "*"
 imagecodecs = "*"
+# numba = "*"
 pillow = ">=13,<14"
 polars = ">=1.38.1"
 polars-st = ">=0.11.0,<0.12"
@@ -42,10 +48,12 @@ psutil = "*"
 pyqtgraph = "*"
 pyqt6 = "*"
 pytorch-gpu = "*"
-rapids = { version = "26.*", channel = "rapidsai" }
+rapids = { version = "26.*" }
+# rapids-xgboost = { version = "*" }
 rich = "<=15.0.0"
 roifile = "*"
 rust = "==1.88.0"
+scanpy = "==1.12.4"
 shapely = "*"
 spatialdata = ">=0.6.0"
 squidpy = ">=1.8.0,<2"
@@ -54,7 +62,6 @@ tomlkit = "*"
 torchvision = "*"
 tqdm = "*"
 zarr = ">3"
-numba = ">=0.68.0,<0.69"
 
 [target.lida.pypi-dependencies]
 cellpose = "==4.2.1.1"
